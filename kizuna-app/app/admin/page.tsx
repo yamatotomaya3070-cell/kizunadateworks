@@ -335,45 +335,6 @@ export default function AdminPage() {
     loadProgress(admin!.id);
   };
 
-  const [migrateSheetId, setMigrateSheetId] = useState('111edUbnPufve1c9YPdoaJt2KAXYnd37RPk--ZtjqT6c');
-  const [migrateMsg, setMigrateMsg] = useState('');
-  const [migrating, setMigrating] = useState(false);
-
-  const runMigration = async (dryRun: boolean) => {
-    if (!migrateSheetId.trim()) { setMigrateMsg('⚠️ スプレッドシートIDを入力してください'); return; }
-    if (!dryRun && !confirm('GAS スプレッドシートから Supabase へデータを移行します。\n（再実行しても重複しません）\n実行しますか？')) return;
-    setMigrating(true); setMigrateMsg(dryRun ? '⏳ 試算中…' : '⏳ 移行中…（数分かかる場合があります）');
-    try {
-      const res = await fetch('/api/admin/migrate-from-sheets', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: admin!.id, spreadsheetId: migrateSheetId.trim(), dryRun }),
-      });
-      const data = await res.json();
-      if (data.error) { setMigrateMsg('⚠️ ' + data.error); return; }
-      const s = data.summary || {};
-      const lines = ['users', 'tasks', 'progress', 'answers'].map(k => {
-        const v = s[k] || { fetched: 0, upserted: 0, errors: [], rejected: 0 };
-        let line = `${k}: 取得 ${v.fetched} / 反映 ${v.upserted}`;
-        if (v.rejected) line += ` / 除外 ${v.rejected}`;
-        if (v.errors?.length) line += ` ⚠️${v.errors.length}件エラー`;
-        if (v.rejectReason) line += `\n   → ${v.rejectReason}`;
-        if (v.headers?.length) line += `\n   ヘッダー: [${v.headers.join(', ')}]`;
-        if (v.sample) line += `\n   サンプル: ${JSON.stringify(v.sample).slice(0, 250)}`;
-        if (v.errors?.length) line += `\n   エラー: ${v.errors.slice(0, 3).join(' | ')}`;
-        return line;
-      });
-      const noteLines = (data.notes || []).map((n: string) => `📝 ${n}`);
-      setMigrateMsg(`${dryRun ? '🔍 試算結果' : '✅ 移行完了'}\n\n` + lines.join('\n\n') + (noteLines.length ? '\n\n' + noteLines.join('\n') : ''));
-      if (!dryRun) {
-        loadUsers(admin!.id); loadTasks(admin!.id); loadProgress(admin!.id);
-      }
-    } catch (e) {
-      setMigrateMsg('⚠️ 通信エラー: ' + (e as Error).message);
-    } finally {
-      setMigrating(false);
-    }
-  };
-
   // ===== オンデマンドレシート生成診断 =====
   type DiagProbe = { model: string; status: number | string; ok: boolean; durationMs: number; sample?: string; error?: string };
   type DiagResult = { ok: boolean; env?: Record<string, boolean>; probe?: DiagProbe[]; recommendedModel?: string; error?: string };
@@ -552,28 +513,6 @@ export default function AdminPage() {
         {/* ===== クライアントタブ ===== */}
         {tab === 'clients' && (
           <>
-            {/* GASスプレッドシートからの自動移行 */}
-            <div style={{ ...S.card, border: '2px solid #fbd38d', background: '#fffaf0' }}>
-              <h3 style={{ ...S.cardTitle, color: '#9c4221' }}>📦 GASスプレッドシートからデータ移行</h3>
-              <p style={{ fontSize: 13, color: '#744210', marginBottom: 10 }}>
-                既存のGoogleスプレッドシート（users / tasks / answers / progress）の内容を Supabase に取り込みます。
-                <br />
-                <b>事前にスプレッドシートを「リンクを知っている全員（閲覧者）」に共有</b>してください。
-                IDは維持されるので、利用者は今のIDとパスワードでログインできます。再実行しても重複しません。
-              </p>
-              <div style={S.row}>
-                <input style={{ ...S.rowInput, flex: 2 }} type="text" placeholder="スプレッドシートID"
-                  value={migrateSheetId} onChange={e => setMigrateSheetId(e.target.value)} />
-                <button style={{ ...S.addBtn, background: '#fff', color: '#9c4221', border: '1px solid #fbd38d', opacity: migrating ? 0.6 : 1 }}
-                  onClick={() => runMigration(true)} disabled={migrating}>🔍 試算（DRY-RUN）</button>
-                <button style={{ ...S.addBtn, background: 'linear-gradient(135deg,#ed8936,#dd6b20)', opacity: migrating ? 0.6 : 1 }}
-                  onClick={() => runMigration(false)} disabled={migrating}>📦 移行を実行</button>
-              </div>
-              {migrateMsg && (
-                <pre style={{ fontSize: 12, color: migrateMsg.includes('⚠️') ? '#c53030' : '#276749', whiteSpace: 'pre-wrap', margin: '8px 0 0', fontFamily: 'inherit' }}>{migrateMsg}</pre>
-              )}
-            </div>
-
             <div style={S.card}>
               <h3 style={S.cardTitle}>➕ 新規クライアント追加</h3>
               <div style={S.row}>
