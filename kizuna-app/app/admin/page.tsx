@@ -374,6 +374,54 @@ export default function AdminPage() {
     }
   };
 
+  // ===== オンデマンドレシート生成診断 =====
+  type DiagProbe = { model: string; status: number | string; ok: boolean; durationMs: number; sample?: string; error?: string };
+  type DiagResult = { ok: boolean; env?: Record<string, boolean>; probe?: DiagProbe[]; recommendedModel?: string; error?: string };
+  const [diagResult, setDiagResult] = useState<DiagResult | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [genTestResult, setGenTestResult] = useState<{ count: number; partial?: boolean; totalMs?: number; lastModel?: string; error?: string; sample?: string } | null>(null);
+  const [genTestLoading, setGenTestLoading] = useState(false);
+
+  const runDiagnostic = async () => {
+    setDiagLoading(true); setDiagResult(null);
+    try {
+      const res = await fetch('/api/admin/ondemand-status', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: admin!.id }),
+      });
+      const data = await res.json();
+      setDiagResult(data);
+    } catch (e) {
+      setDiagResult({ ok: false, error: '通信エラー: ' + (e as Error).message });
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+
+  const runGenTest = async () => {
+    setGenTestLoading(true); setGenTestResult(null);
+    try {
+      const t0 = Date.now();
+      const res = await fetch('/api/ondemand-tasks', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: admin!.id, count: 5, category: 'レシート' }),
+      });
+      const data = await res.json();
+      setGenTestResult({
+        count: data.count ?? 0,
+        partial: data.partial,
+        totalMs: data.diagnostics?.totalMs ?? (Date.now() - t0),
+        lastModel: data.diagnostics?.lastModel,
+        error: data.error,
+        sample: Array.isArray(data.texts) && data.texts[0] ? String(data.texts[0]).slice(0, 120) : undefined,
+      });
+    } catch (e) {
+      setGenTestResult({ count: 0, error: '通信エラー: ' + (e as Error).message });
+    } finally {
+      setGenTestLoading(false);
+    }
+  };
+
   const backfillAccuracy = async () => {
     if (!confirm('既存の回答の正答率を再計算します（時間がかかる場合があります）。実行しますか？')) return;
     const res = await fetch('/api/admin/backfill-accuracy', {
@@ -681,6 +729,62 @@ export default function AdminPage() {
                 onClick={backfillAccuracy} title="過去の回答の正答率を再計算して埋めます">
                 🔄 過去分の正答率を再計算
               </button>
+            </div>
+
+            {/* オンデマンドレシート生成診断 */}
+            <div style={{ ...S.card, border: '2px solid #90cdf4', background: '#ebf8ff' }}>
+              <h3 style={{ ...S.cardTitle, color: '#2b6cb0' }}>🔧 オンデマンドレシート生成診断</h3>
+              <p style={{ fontSize: 13, color: '#2c5282', marginBottom: 12 }}>
+                利用者の「次へ」ボタンで動くレシートテキスト生成（Gemini → Canvas描画）が安定して動くかをテストします。
+                失敗が続く場合はここで原因を確認してください。
+              </p>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                <button style={{ ...S.addBtn, background: 'linear-gradient(135deg,#4299e1,#2b6cb0)', opacity: diagLoading ? 0.6 : 1 }}
+                  onClick={runDiagnostic} disabled={diagLoading}>
+                  🔧 接続診断（Geminiに疎通確認）
+                </button>
+                <button style={{ ...S.addBtn, background: 'linear-gradient(135deg,#4299e1,#2b6cb0)', opacity: genTestLoading ? 0.6 : 1 }}
+                  onClick={runGenTest} disabled={genTestLoading}>
+                  📦 5件生成テスト
+                </button>
+              </div>
+
+              {diagLoading && <p style={{ fontSize: 13, color: '#2c5282' }}>⏳ 診断中…</p>}
+              {diagResult && (
+                <div style={{ background: '#fff', padding: 12, borderRadius: 8, fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap', marginBottom: 12 }}>
+                  <div style={{ fontWeight: 700, color: diagResult.ok ? '#276749' : '#c53030', marginBottom: 6 }}>
+                    {diagResult.ok ? `✅ 接続OK (推奨モデル: ${diagResult.recommendedModel ?? '-'})` : `⚠️ 接続NG: ${diagResult.error ?? ''}`}
+                  </div>
+                  {diagResult.env && (
+                    <div style={{ marginBottom: 6 }}>
+                      環境変数: GEMINI_API_KEY={diagResult.env.GEMINI_API_KEY ? '✓' : '✗'},
+                      SUPABASE_URL={diagResult.env.NEXT_PUBLIC_SUPABASE_URL ? '✓' : '✗'},
+                      SUPABASE_KEY={diagResult.env.SUPABASE_SERVICE_ROLE_KEY ? '✓' : '✗'}
+                    </div>
+                  )}
+                  {diagResult.probe?.map((p, i) => (
+                    <div key={i} style={{ color: p.ok ? '#276749' : '#c53030' }}>
+                      [{i + 1}] {p.model}: status={String(p.status)} {p.durationMs}ms{p.error ? ` err=${p.error.slice(0, 80)}` : ''}{p.sample ? ` sample=${p.sample.slice(0, 60)}` : ''}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {genTestLoading && <p style={{ fontSize: 13, color: '#2c5282' }}>⏳ 5件生成中…（10〜30秒程度）</p>}
+              {genTestResult && (
+                <div style={{ background: '#fff', padding: 12, borderRadius: 8, fontSize: 12, fontFamily: 'monospace' }}>
+                  <div style={{ fontWeight: 700, color: genTestResult.count > 0 ? '#276749' : '#c53030', marginBottom: 6 }}>
+                    {genTestResult.count > 0
+                      ? `✅ ${genTestResult.count}件取得（${genTestResult.totalMs}ms, モデル: ${genTestResult.lastModel ?? '-'}）${genTestResult.partial ? ' ⚠️部分結果' : ''}`
+                      : `⚠️ 取得失敗: ${genTestResult.error ?? ''}`}
+                  </div>
+                  {genTestResult.sample && (
+                    <div style={{ color: '#4a5568', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                      サンプル: {genTestResult.sample}…
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* 全期間集計（GAS の「集計」シート互換：名前・回答数・正答数・正答率） */}

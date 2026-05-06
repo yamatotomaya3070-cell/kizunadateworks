@@ -23,21 +23,42 @@ interface ReceiptItem {
 
 // ============================================================
 // Canvas レシート描画（GASのrenderReceiptCanvas互換）
+// 不完全な JSON、items 欠損、price 不正、store 欠損などでもクラッシュしないよう防御的にする
 // ============================================================
 async function renderReceiptCanvas(text: string): Promise<string> {
   if (typeof document === 'undefined') return '';
-  if (document.fonts) await document.fonts.ready;
+  try {
+    if (document.fonts) await document.fonts.ready;
+  } catch { /* font ready 失敗は無視（描画自体は続行） */ }
 
   const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    console.error('[receipt-canvas] 2d context unavailable');
+    return '';
+  }
 
-  let rd: { store?: string; date?: string; items?: { name: string; price: number }[] } | null = null;
-  try { rd = JSON.parse(text); } catch { /* ignore */ }
+  // JSON パース失敗 / 部分パース対応
+  type Item = { name?: string; price?: number | string };
+  let rd: { store?: string; date?: string; items?: Item[] } | null = null;
+  try { rd = JSON.parse(text); } catch (e) {
+    console.warn('[receipt-canvas] JSON parse failed, using raw text', { sample: text.slice(0, 80), err: (e as Error).message });
+  }
 
-  const store = rd?.store || text;
-  const date = rd?.date || '';
-  const items = rd?.items || [];
-  const sub = items.reduce((s, it) => s + Number(it.price || 0), 0);
+  // items の各要素を安全に取り出す
+  const safeItems = Array.isArray(rd?.items)
+    ? rd.items
+        .filter((it): it is Item => it != null && typeof it === 'object')
+        .map((it) => ({
+          name: String(it.name ?? '').slice(0, 60) || '(品名不明)',
+          price: Number.isFinite(Number(it.price)) ? Math.max(0, Math.floor(Number(it.price))) : 0,
+        }))
+    : [];
+
+  const store = (rd?.store && String(rd.store).trim()) || (text ? text.slice(0, 30) : '(店舗名不明)');
+  const date = (rd?.date && String(rd.date).trim()) || '';
+  const items = safeItems;
+  const sub = items.reduce((s, it) => s + it.price, 0);
   const tax = Math.round(sub * 0.1);
   const total = sub + tax;
 
@@ -93,7 +114,12 @@ async function renderReceiptCanvas(text: string): Promise<string> {
     ry += lineH;
   }
   ctx.restore();
-  return canvas.toDataURL('image/jpeg', 0.88);
+  try {
+    return canvas.toDataURL('image/jpeg', 0.88);
+  } catch (e) {
+    console.error('[receipt-canvas] toDataURL failed', { err: (e as Error).message });
+    return '';
+  }
 }
 
 // ============================================================
@@ -121,6 +147,7 @@ export default function UserPage() {
   const [taskImageUrl, setTaskImageUrl] = useState('');
   const [taskLoading, setTaskLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
   const answerRef = useRef<HTMLInputElement>(null);
 
   // ===== オンデマンドキュー（GAS UserPage の fillQueue 互換） =====
@@ -131,9 +158,9 @@ export default function UserPage() {
   const QUEUE_MIN = 2;
   const QUEUE_FILL = 5;
 
-  const fillQueue = useCallback(async (uid: string) => {
-    if (isFetchingQueueRef.current) return;
-    if (taskQueueRef.current.length >= QUEUE_MIN) return;
+  const fillQueue = useCallback(async (uid: string): Promise<{ ok: boolean; error?: string }> => {
+    if (isFetchingQueueRef.current) return { ok: true };
+    if (taskQueueRef.current.length >= QUEUE_MIN) return { ok: true };
     isFetchingQueueRef.current = true;
     try {
       const res = await fetch('/api/ondemand-tasks', {
@@ -144,9 +171,17 @@ export default function UserPage() {
       const data = await res.json();
       if (Array.isArray(data.texts) && data.texts.length > 0) {
         taskQueueRef.current.push(...data.texts);
+        if (data.partial) {
+          console.warn('[fillQueue] partial result', { requested: QUEUE_FILL, got: data.texts.length });
+        }
+        return { ok: true };
       }
+      const err = data.error || 'レシート生成に失敗しました';
+      console.error('[fillQueue] empty result', data);
+      return { ok: false, error: err };
     } catch (e) {
-      console.error('fillQueue error:', e);
+      console.error('[fillQueue] network error', e);
+      return { ok: false, error: '通信エラー: ' + (e as Error).message };
     } finally {
       isFetchingQueueRef.current = false;
     }
@@ -164,14 +199,23 @@ export default function UserPage() {
 
   // オンデマンドキューから1件取り出して、その場で Canvas レンダリング
   const loadTaskFromQueue = useCallback(async (uid: string) => {
-    if (taskQueueRef.current.length === 0) await fillQueue(uid);
+    setQueueError(null);
+    if (taskQueueRef.current.length === 0) {
+      const r = await fillQueue(uid);
+      if (!r.ok) {
+        setTask(null);
+        setTaskLoading(false);
+        setQueueError(r.error || 'レシート生成に失敗しました');
+        return;
+      }
+    }
     const text = taskQueueRef.current.shift();
     if (!text) {
       setTask(null);
       setTaskLoading(false);
+      setQueueError('レシートを取得できませんでした');
       return;
     }
-    // オンデマンドタスクは DB に存在しない（task.id は仮UUID）
     const t: Task = {
       id: `ondemand-${crypto.randomUUID()}`,
       image_url: '',
@@ -182,14 +226,20 @@ export default function UserPage() {
     setTask(t);
     try {
       const dataUrl = await renderReceiptCanvas(text);
+      if (!dataUrl) {
+        setQueueError('レシート画像の描画に失敗しました');
+      }
       setTaskImageUrl(dataUrl);
     } catch (e) {
-      console.error('renderReceiptCanvas error:', e);
+      console.error('[loadTaskFromQueue] render failed', e);
       setTaskImageUrl('');
+      setQueueError('レシート画像の描画に失敗しました');
     }
     setTaskLoading(false);
-    // バックグラウンドで補充
-    fillQueue(uid);
+    // バックグラウンドで補充（失敗してもユーザー操作はブロックしない）
+    fillQueue(uid).then((r) => {
+      if (!r.ok) console.warn('[loadTaskFromQueue] background fillQueue failed', r);
+    });
     setTimeout(() => answerRef.current?.focus(), 100);
   }, [fillQueue]);
 
@@ -199,6 +249,7 @@ export default function UserPage() {
     setFeedback(null);
     setLastAnswer(null);
     setEditing(false);
+    setQueueError(null);
     setAnswerText('');
     setReceiptRows([{ name: '', price: '' }]);
 
@@ -411,8 +462,31 @@ export default function UserPage() {
         <div style={{ flex: 1.4, background: '#1e2535', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
           {taskLoading ? (
             <p style={{ color: '#718096' }}>読み込み中…</p>
+          ) : queueError ? (
+            <div style={{ textAlign: 'center', color: '#e2e8f0', maxWidth: 420 }}>
+              <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+              <p style={{ fontSize: 16, marginBottom: 8 }}>現在、レシートタスクを準備中です</p>
+              <p style={{ fontSize: 13, color: '#a0aec0', marginBottom: 20 }}>
+                少し時間をおいて再試行してください
+              </p>
+              <button
+                style={{ padding: '10px 24px', borderRadius: 8, border: 'none', background: 'linear-gradient(135deg, #48bb78 0%, #38a169 100%)', color: '#fff', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}
+                onClick={() => user && loadTask(user.id)}
+              >
+                🔄 再試行
+              </button>
+              <p style={{ fontSize: 11, color: '#718096', marginTop: 16 }}>{queueError}</p>
+            </div>
           ) : !task ? (
-            <p style={{ color: '#718096' }}>😢 タスクがありません</p>
+            <div style={{ textAlign: 'center', color: '#718096' }}>
+              <p>😢 タスクがありません</p>
+              <button
+                style={{ marginTop: 16, padding: '8px 20px', borderRadius: 6, border: '1px solid #4a5568', background: 'transparent', color: '#a0aec0', cursor: 'pointer', fontFamily: 'inherit' }}
+                onClick={() => user && loadTask(user.id)}
+              >
+                🔄 再読み込み
+              </button>
+            </div>
           ) : taskImageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={taskImageUrl} alt="タスク画像" style={{ maxWidth: '100%', maxHeight: 'calc(100vh - 56px)', objectFit: 'contain', borderRadius: 8, boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }} />
