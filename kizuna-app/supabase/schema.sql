@@ -92,5 +92,5 @@ alter table settings disable row level security;
 -- パスワード: admin1234 のSHA-256ハッシュ
 -- ============================================================
 insert into users (name, login_id, password, role)
-values ('管理者', 'admin', '3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b', 'admin')
+values ('管理者', 'admin', 'ac9689e2272427085e35b9d3e3e8bed88cb3434828b43b86fc0596cad4c6e270', 'admin')
 on conflict (login_id) do nothing;
