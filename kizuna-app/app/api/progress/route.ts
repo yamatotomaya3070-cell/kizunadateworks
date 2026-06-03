@@ -58,28 +58,37 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 月間 正解/不正解/未入力 集計（指定月の範囲）
+    // 月間 正解/不正解/未入力 集計（JST月の範囲）
     const [myear, mmonth] = month.split('-').map(Number);
+    const jstOffset = 9 * 60 * 60 * 1000;
+    const monthStartUtc = new Date(Date.UTC(myear, mmonth - 1, 1) - jstOffset).toISOString();
     const nextYear = mmonth === 12 ? myear + 1 : myear;
     const nextMon = mmonth === 12 ? 1 : mmonth + 1;
-    const nextMonthStr = `${nextYear}-${String(nextMon).padStart(2, '0')}`;
-    const monthStartIso = `${month}-01T00:00:00+09:00`;
-    const monthEndIso = `${nextMonthStr}-01T00:00:00+09:00`;
+    const monthEndUtc = new Date(Date.UTC(nextYear, nextMon - 1, 1) - jstOffset).toISOString();
 
-    const { data: monthAnswers } = await supabaseAdmin
+    // 当月は上限なし（.lt 不要）、過去月のみ上限を設ける
+    let answersQuery = supabaseAdmin
       .from('answers')
       .select('user_id, is_correct, answer_text')
-      .gte('created_at', new Date(monthStartIso).toISOString())
-      .lt('created_at', new Date(monthEndIso).toISOString());
+      .gte('created_at', monthStartUtc);
+    if (!isCurrentMonth) {
+      answersQuery = answersQuery.lt('created_at', monthEndUtc);
+    }
+    const { data: monthAnswers } = await answersQuery;
 
     const correctMap = new Map<string, number>();
     const wrongMap = new Map<string, number>();
     const emptyMap = new Map<string, number>();
     for (const a of monthAnswers ?? []) {
       const isEmpty = !a.answer_text || a.answer_text.trim() === '' || a.answer_text === '{"items":[]}';
-      if (isEmpty) emptyMap.set(a.user_id, (emptyMap.get(a.user_id) ?? 0) + 1);
-      if (a.is_correct) correctMap.set(a.user_id, (correctMap.get(a.user_id) ?? 0) + 1);
-      else wrongMap.set(a.user_id, (wrongMap.get(a.user_id) ?? 0) + 1);
+      // 空回答は empty のみカウント（wrong に含めない）
+      if (isEmpty) {
+        emptyMap.set(a.user_id, (emptyMap.get(a.user_id) ?? 0) + 1);
+      } else if (a.is_correct) {
+        correctMap.set(a.user_id, (correctMap.get(a.user_id) ?? 0) + 1);
+      } else {
+        wrongMap.set(a.user_id, (wrongMap.get(a.user_id) ?? 0) + 1);
+      }
     }
 
     // 全期間集計（GAS の updateSummarySheet 互換：名前・回答数・正答数・正答率）

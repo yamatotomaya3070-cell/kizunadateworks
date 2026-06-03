@@ -488,6 +488,7 @@ export default function AdminPage() {
                   対象月：{monthLabel(progressMonthFilter)}
                 </span>
               )}
+              <button style={{ padding: '8px 16px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#fff', color: '#4a5568', cursor: 'pointer', fontSize: 13, fontWeight: 700, fontFamily: 'inherit' }} onClick={() => loadProgress(admin.id, progressMonthFilter)}>🔄 更新</button>
             </div>
 
 
