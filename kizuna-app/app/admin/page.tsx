@@ -335,19 +335,6 @@ export default function AdminPage() {
     }
   };
 
-  const backfillAccuracy = async () => {
-    if (!confirm('既存の回答の正答率を再計算します（時間がかかる場合があります）。実行しますか？')) return;
-    const res = await fetch('/api/admin/backfill-accuracy', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: admin!.id }),
-    });
-    const data = await res.json();
-    if (data.error) { alert('⚠️ ' + data.error); return; }
-    alert(`✅ 完了：${data.updated} / ${data.scanned} 件を更新しました`);
-    loadProgress(admin!.id, progressMonthFilter);
-    loadAnswers(admin!.id, answerFilter, answerClientFilter);
-  };
-
   const clientNameOf = (cid: string | null | undefined) => {
     if (!cid) return '';
     return clients.find(c => c.id === cid)?.name ?? '';
@@ -362,46 +349,6 @@ export default function AdminPage() {
     if (!ym) return '';
     const [y, m] = ym.split('-').map(Number);
     return `${y}年${m}月`;
-  };
-
-  const downloadAllTimeCsv = () => {
-    const rows = progressClientFilter
-      ? progressRows.filter(p => p.client_id === progressClientFilter)
-      : progressRows;
-    if (!rows.length) return;
-    const header = 'client_name,name,login_id,回答数,正答数,正答率\n';
-    const body = rows.map(p => {
-      const ratio = p.all_total > 0 ? ((p.all_correct / p.all_total) * 100).toFixed(1) + '%' : '';
-      return [
-        clientNameOf(p.client_id), p.name, p.login_id,
-        p.all_total, p.all_correct, ratio,
-      ].map(csvEscape).join(',');
-    }).join('\n');
-    const blob = new Blob(['﻿' + header + body], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url;
-    a.download = `集計${progressClientFilter ? '_' + clientNameOf(progressClientFilter) : ''}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const downloadProgressCsv = () => {
-    const rows = progressClientFilter
-      ? progressRows.filter(p => p.client_id === progressClientFilter)
-      : progressRows;
-    if (!rows.length) return;
-    const header = 'client_name,name,login_id,month,today_count,completed_count,correct_count,wrong_count,empty_count\n';
-    const body = rows.map(p => [
-      clientNameOf(p.client_id), p.name, p.login_id, p.month,
-      p.today_count, p.completed_count, p.correct_count, p.wrong_count, p.empty_count,
-    ].map(csvEscape).join(',')).join('\n');
-    const blob = new Blob(['﻿' + header + body], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url;
-    const suffix = [progressMonthFilter, progressClientFilter ? clientNameOf(progressClientFilter) : ''].filter(Boolean).join('_');
-    a.download = `progress${suffix ? '_' + suffix : ''}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   const downloadAnswersCsv = () => {
@@ -589,14 +536,6 @@ export default function AdminPage() {
                   対象月：{monthLabel(progressMonthFilter)}
                 </span>
               )}
-            </div>
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-              <button style={S.csvBtn} onClick={downloadProgressCsv}>📥 進捗CSV</button>
-              <button style={S.csvBtn} onClick={downloadAllTimeCsv}>📈 集計CSV（全期間）</button>
-              <button style={{ ...S.csvBtn, borderColor: '#fbd38d', background: '#fffaf0', color: '#9c4221' }}
-                onClick={backfillAccuracy} title="過去の回答の正答率を再計算して埋めます">
-                🔄 過去分の正答率を再計算
-              </button>
             </div>
 
             {/* オンデマンドレシート生成診断 */}
