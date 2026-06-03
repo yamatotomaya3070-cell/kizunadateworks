@@ -212,7 +212,7 @@ export async function GET(req: NextRequest) {
       tasks!answers_task_id_fkey(category, task_type, image_url, correct_text)
     `)
     .order('created_at', { ascending: false })
-    .limit(500);
+    .limit(5000);
 
   if (targetUserId) {
     query = query.eq('user_id', targetUserId);

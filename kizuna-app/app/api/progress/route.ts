@@ -69,8 +69,9 @@ export async function GET(req: NextRequest) {
     // 当月は上限なし（.lt 不要）、過去月のみ上限を設ける
     let answersQuery = supabaseAdmin
       .from('answers')
-      .select('user_id, is_correct, answer_text')
-      .gte('created_at', monthStartUtc);
+      .select('user_id, is_correct, answer_text, accuracy')
+      .gte('created_at', monthStartUtc)
+      .limit(50000);
     if (!isCurrentMonth) {
       answersQuery = answersQuery.lt('created_at', monthEndUtc);
     }
@@ -79,9 +80,10 @@ export async function GET(req: NextRequest) {
     const correctMap = new Map<string, number>();
     const wrongMap = new Map<string, number>();
     const emptyMap = new Map<string, number>();
+    const accuracySumMap = new Map<string, number>();
+    const answeredCountMap = new Map<string, number>();
     for (const a of monthAnswers ?? []) {
       const isEmpty = !a.answer_text || a.answer_text.trim() === '' || a.answer_text === '{"items":[]}';
-      // 空回答は empty のみカウント（wrong に含めない）
       if (isEmpty) {
         emptyMap.set(a.user_id, (emptyMap.get(a.user_id) ?? 0) + 1);
       } else if (a.is_correct) {
@@ -89,17 +91,32 @@ export async function GET(req: NextRequest) {
       } else {
         wrongMap.set(a.user_id, (wrongMap.get(a.user_id) ?? 0) + 1);
       }
+      // accuracy の平均を計算（空回答除く）
+      if (!isEmpty && (a as { accuracy?: number | null }).accuracy != null) {
+        const acc = (a as { accuracy: number }).accuracy;
+        accuracySumMap.set(a.user_id, (accuracySumMap.get(a.user_id) ?? 0) + acc);
+        answeredCountMap.set(a.user_id, (answeredCountMap.get(a.user_id) ?? 0) + 1);
+      }
     }
 
-    // 全期間集計（GAS の updateSummarySheet 互換：名前・回答数・正答数・正答率）
+    // 全期間集計
     const { data: allTimeRows } = await supabaseAdmin
       .from('answers')
-      .select('user_id, is_correct');
+      .select('user_id, is_correct, answer_text, accuracy')
+      .limit(200000);
     const allTotalMap = new Map<string, number>();
     const allCorrectMap = new Map<string, number>();
+    const allAccSumMap = new Map<string, number>();
+    const allAccCountMap = new Map<string, number>();
     for (const a of allTimeRows ?? []) {
       allTotalMap.set(a.user_id, (allTotalMap.get(a.user_id) ?? 0) + 1);
       if (a.is_correct) allCorrectMap.set(a.user_id, (allCorrectMap.get(a.user_id) ?? 0) + 1);
+      const isEmpty = !a.answer_text || a.answer_text.trim() === '' || a.answer_text === '{"items":[]}';
+      if (!isEmpty && (a as { accuracy?: number | null }).accuracy != null) {
+        const acc = (a as { accuracy: number }).accuracy;
+        allAccSumMap.set(a.user_id, (allAccSumMap.get(a.user_id) ?? 0) + acc);
+        allAccCountMap.set(a.user_id, (allAccCountMap.get(a.user_id) ?? 0) + 1);
+      }
     }
 
     const { data: clients } = await supabaseAdmin
@@ -109,6 +126,12 @@ export async function GET(req: NextRequest) {
 
     let userList = users ?? [];
     if (clientId) userList = userList.filter((u) => u.client_id === clientId);
+
+    const avgAccuracy = (sumMap: Map<string, number>, countMap: Map<string, number>, uid: string): number | null => {
+      const cnt = countMap.get(uid) ?? 0;
+      if (cnt === 0) return null;
+      return (sumMap.get(uid) ?? 0) / cnt;
+    };
 
     const progress = userList.map((u) => ({
       user_id: u.id,
@@ -121,8 +144,11 @@ export async function GET(req: NextRequest) {
       correct_count: correctMap.get(u.id) ?? 0,
       wrong_count: wrongMap.get(u.id) ?? 0,
       empty_count: emptyMap.get(u.id) ?? 0,
+      answered_count: (correctMap.get(u.id) ?? 0) + (wrongMap.get(u.id) ?? 0),
+      avg_accuracy: avgAccuracy(accuracySumMap, answeredCountMap, u.id),
       all_total: allTotalMap.get(u.id) ?? 0,
       all_correct: allCorrectMap.get(u.id) ?? 0,
+      all_avg_accuracy: avgAccuracy(allAccSumMap, allAccCountMap, u.id),
     }));
 
     return NextResponse.json({ progress, quota, clients: clients ?? [], targetMonth: month });

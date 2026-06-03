@@ -15,8 +15,11 @@ interface ProgressRow {
   correct_count: number;
   wrong_count: number;
   empty_count: number;
+  answered_count: number;
+  avg_accuracy: number | null;
   all_total: number;
   all_correct: number;
+  all_avg_accuracy: number | null;
 }
 interface Answer { id: string; user_name: string; user_id: string; client_id: string | null; client_name: string; task_category: string; task_type: string; image_url: string; correct_text: string; answer_text: string; is_correct: boolean; accuracy: number | null; created_at: string; updated_at: string | null; }
 interface ReportRow { name: string; ans_count: number; correct_count: number; empty_count: number; rate: string; }
@@ -515,29 +518,33 @@ export default function AdminPage() {
               }
 
               const totalAns = isMonthFiltered
-                ? filtered.reduce((s, r) => s + r.correct_count + r.wrong_count + r.empty_count, 0)
+                ? filtered.reduce((s, r) => s + r.answered_count, 0)
                 : filtered.reduce((s, r) => s + r.all_total, 0);
-              const totalCorrect = isMonthFiltered
-                ? filtered.reduce((s, r) => s + r.correct_count, 0)
-                : filtered.reduce((s, r) => s + r.all_correct, 0);
-              const overallRate = totalAns > 0 ? ((totalCorrect / totalAns) * 100).toFixed(1) + '%' : '—';
+              const accFiltered = isMonthFiltered
+                ? filtered.filter(r => r.avg_accuracy != null)
+                : filtered.filter(r => r.all_avg_accuracy != null);
+              const overallRate = accFiltered.length > 0
+                ? (accFiltered.reduce((s, r) => s + (isMonthFiltered ? (r.avg_accuracy ?? 0) : (r.all_avg_accuracy ?? 0)), 0) / accFiltered.length * 100).toFixed(1) + '%'
+                : '—';
 
               if (isMonthFiltered) {
-                tableSubtitle = `対象月：${monthLabel(progressMonthFilter)}／合計 回答 ${totalAns.toLocaleString()} 件、正答 ${totalCorrect.toLocaleString()} 件、正答率 ${overallRate}`;
+                tableSubtitle = `対象月：${monthLabel(progressMonthFilter)}／合計 回答 ${totalAns.toLocaleString()} 件、正答率 ${overallRate}`;
               } else {
-                tableSubtitle = `合計 回答 ${totalAns.toLocaleString()} 件、正答 ${totalCorrect.toLocaleString()} 件、正答率 ${overallRate}`;
+                tableSubtitle = `合計 回答 ${totalAns.toLocaleString()} 件、正答率 ${overallRate}`;
               }
 
               const sorted = [...filtered].sort((a, b) => {
-                const aAns = isMonthFiltered ? (a.correct_count + a.wrong_count + a.empty_count) : a.all_total;
-                const bAns = isMonthFiltered ? (b.correct_count + b.wrong_count + b.empty_count) : b.all_total;
+                const aAns = isMonthFiltered ? a.answered_count : a.all_total;
+                const bAns = isMonthFiltered ? b.answered_count : b.all_total;
                 return bAns - aAns;
               });
 
               const reportRows: ReportRow[] = sorted.map(p => {
-                const ac = isMonthFiltered ? p.correct_count + p.wrong_count + p.empty_count : p.all_total;
-                const cc = isMonthFiltered ? p.correct_count : p.all_correct;
-                return { name: p.name, ans_count: ac, correct_count: cc, empty_count: p.empty_count, rate: ac > 0 ? ((cc / ac) * 100).toFixed(1) + '%' : '—' };
+                const ac = isMonthFiltered ? p.answered_count : p.all_total;
+                const rate = isMonthFiltered
+                  ? (p.avg_accuracy != null ? (p.avg_accuracy * 100).toFixed(1) + '%' : '—')
+                  : (p.all_avg_accuracy != null ? (p.all_avg_accuracy * 100).toFixed(1) + '%' : '—');
+                return { name: p.name, ans_count: ac, correct_count: p.correct_count, empty_count: p.empty_count, rate };
               });
 
               return (
@@ -572,11 +579,10 @@ export default function AdminPage() {
                     </thead>
                     <tbody>
                       {sorted.map(p => {
-                        const ansCount = isMonthFiltered
-                          ? p.correct_count + p.wrong_count + p.empty_count
-                          : p.all_total;
-                        const correctCount = isMonthFiltered ? p.correct_count : p.all_correct;
-                        const rate = ansCount > 0 ? ((correctCount / ansCount) * 100).toFixed(1) + '%' : '—';
+                        const ansCount = isMonthFiltered ? p.answered_count : p.all_total;
+                        const rate = isMonthFiltered
+                          ? (p.avg_accuracy != null ? (p.avg_accuracy * 100).toFixed(1) + '%' : '—')
+                          : (p.all_avg_accuracy != null ? (p.all_avg_accuracy * 100).toFixed(1) + '%' : '—');
                         return (
                           <tr key={p.user_id}>
                             <td style={S.td}>{p.name}</td>
@@ -584,7 +590,7 @@ export default function AdminPage() {
                               <td style={{ ...S.td, fontSize: 12, color: '#4a5568' }}>{clientNameOf(p.client_id) || '—'}</td>
                             )}
                             <td style={S.td}>{ansCount.toLocaleString()}</td>
-                            <td style={S.td}>{correctCount.toLocaleString()}</td>
+                            <td style={S.td}>{p.correct_count.toLocaleString()}</td>
                             {isMonthFiltered && <td style={S.td}>{p.empty_count.toLocaleString()}</td>}
                             <td style={{ ...S.td, fontWeight: 700, color: ansCount > 0 ? '#276749' : '#a0aec0' }}>{rate}</td>
                           </tr>
@@ -621,8 +627,11 @@ export default function AdminPage() {
                 const correct = rows.reduce((s, r) => s + r.correct_count, 0);
                 const wrong = rows.reduce((s, r) => s + r.wrong_count, 0);
                 const empty = rows.reduce((s, r) => s + r.empty_count, 0);
-                const answered = correct + wrong;
-                const accuracyPct = answered > 0 ? ((correct / answered) * 100).toFixed(1) : '—';
+                const answered = rows.reduce((s, r) => s + r.answered_count, 0);
+                const accRows = rows.filter(r => r.avg_accuracy != null);
+                const accuracyPct = accRows.length > 0
+                  ? (accRows.reduce((s, r) => s + (r.avg_accuracy ?? 0), 0) / accRows.length * 100).toFixed(1)
+                  : '—';
                 const totalQuota = quota * rows.length;
                 return (
                   <div key={key} style={{ ...S.card, padding: 0, overflow: 'hidden' }}>
@@ -654,8 +663,7 @@ export default function AdminPage() {
                       </thead>
                       <tbody>
                         {rows.map(p => {
-                          const ans = p.correct_count + p.wrong_count;
-                          const rate = ans > 0 ? ((p.correct_count / ans) * 100).toFixed(1) + '%' : '—';
+                          const rate = p.avg_accuracy != null ? (p.avg_accuracy * 100).toFixed(1) + '%' : '—';
                           return (
                             <tr key={p.user_id}>
                               <td style={S.td}>{p.name}</td>
@@ -665,7 +673,7 @@ export default function AdminPage() {
                               <td style={S.td}>{p.correct_count}</td>
                               <td style={S.td}>{p.wrong_count}</td>
                               <td style={S.td}>{p.empty_count}</td>
-                              <td style={{ ...S.td, fontWeight: 700, color: ans > 0 ? '#276749' : '#a0aec0' }}>{rate}</td>
+                              <td style={{ ...S.td, fontWeight: 700, color: p.avg_accuracy != null ? '#276749' : '#a0aec0' }}>{rate}</td>
                               <td style={S.td}>
                                 <div style={{ background: '#e2e8f0', borderRadius: 6, height: 10, width: 140, overflow: 'hidden' }}>
                                   <div style={{ background: 'linear-gradient(90deg,#667eea,#764ba2)', height: '100%', width: `${Math.min(100, (p.completed_count / quota) * 100).toFixed(0)}%`, borderRadius: 6 }} />
