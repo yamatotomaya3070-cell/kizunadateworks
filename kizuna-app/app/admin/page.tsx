@@ -85,7 +85,7 @@ export default function AdminPage() {
   const [answerUsers, setAnswerUsers] = useState<User[]>([]);
   const [answerFilter, setAnswerFilter] = useState('');
   const [answerClientFilter, setAnswerClientFilter] = useState('');
-  const [answerMonthFilter, setAnswerMonthFilter] = useState('');
+  const [answerMonthFilter, setAnswerMonthFilter] = useState(() => getMonthOptions()[0]?.value ?? '');
   const [answersMsg, setAnswersMsg] = useState('');
 
   const loadClients = useCallback(async (uid: string) => {
