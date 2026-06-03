@@ -19,6 +19,8 @@ interface ProgressRow {
   all_correct: number;
 }
 interface Answer { id: string; user_name: string; user_id: string; client_id: string | null; client_name: string; task_category: string; task_type: string; image_url: string; correct_text: string; answer_text: string; is_correct: boolean; accuracy: number | null; created_at: string; updated_at: string | null; }
+interface ReportRow { name: string; ans_count: number; correct_count: number; empty_count: number; rate: string; }
+interface SavedReport { id: string; client_id: string | null; month: string; title: string; subtitle: string; rows: ReportRow[]; created_at: string; }
 
 type Tab = 'clients' | 'users' | 'progress' | 'answers';
 
@@ -71,6 +73,10 @@ export default function AdminPage() {
   const [progressClientFilter, setProgressClientFilter] = useState('');
   const [progressMonthFilter, setProgressMonthFilter] = useState('');
 
+  // 保存済み集計
+  const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
+  const [saveMsg, setSaveMsg] = useState('');
+
   // 回答タブ
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [answerUsers, setAnswerUsers] = useState<User[]>([]);
@@ -99,6 +105,14 @@ export default function AdminPage() {
     if (data.progress) setProgressRows(data.progress);
     if (data.quota) { setQuota(data.quota); setQuotaInput(data.quota); }
     if (data.clients) setClients(data.clients);
+  }, []);
+
+  const loadReports = useCallback(async (uid: string, clientId = '') => {
+    const params = new URLSearchParams({ userId: uid });
+    if (clientId) params.set('clientId', clientId);
+    const res = await fetch(`/api/reports?${params.toString()}`);
+    const data = await res.json();
+    if (data.reports) setSavedReports(data.reports);
   }, []);
 
   const loadAnswers = useCallback(async (uid: string, userFilter = '', clientFilter = '') => {
@@ -218,6 +232,37 @@ export default function AdminPage() {
     if (data.error) { setQuotaMsg('⚠️ ' + data.error); return; }
     setQuota(data.quota); setQuotaMsg('✅ 保存しました');
     loadProgress(admin!.id, progressMonthFilter);
+  };
+
+  // ===== 集計保存 =====
+  const saveReport = async (title: string, subtitle: string, rows: ReportRow[]) => {
+    setSaveMsg('');
+    const res = await fetch('/api/reports', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: admin!.id,
+        clientId: progressClientFilter || null,
+        month: progressMonthFilter,
+        title,
+        subtitle,
+        rows,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) { setSaveMsg('⚠️ ' + data.error); return; }
+    setSaveMsg('✅ 保存しました');
+    loadReports(admin!.id, progressClientFilter);
+  };
+
+  const deleteReport = async (reportId: string) => {
+    if (!confirm('この集計を削除しますか？')) return;
+    const res = await fetch('/api/reports', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: admin!.id, reportId }),
+    });
+    const data = await res.json();
+    if (data.error) { alert('⚠️ ' + data.error); return; }
+    loadReports(admin!.id, progressClientFilter);
   };
 
   // ===== オンデマンドレシート生成診断 =====
@@ -499,7 +544,7 @@ export default function AdminPage() {
 
             {/* フィルター行 */}
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
-              <select style={{ ...S.rowInput, maxWidth: 200 }} value={progressClientFilter} onChange={e => setProgressClientFilter(e.target.value)}>
+              <select style={{ ...S.rowInput, maxWidth: 200 }} value={progressClientFilter} onChange={e => { setProgressClientFilter(e.target.value); loadReports(admin.id, e.target.value); setSaveMsg(''); }}>
                 <option value="">全クライアント</option>
                 {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -630,11 +675,30 @@ export default function AdminPage() {
                 return bAns - aAns;
               });
 
+              const reportRows: ReportRow[] = sorted.map(p => {
+                const ac = isMonthFiltered ? p.correct_count + p.wrong_count + p.empty_count : p.all_total;
+                const cc = isMonthFiltered ? p.correct_count : p.all_correct;
+                return { name: p.name, ans_count: ac, correct_count: cc, empty_count: p.empty_count, rate: ac > 0 ? ((cc / ac) * 100).toFixed(1) + '%' : '—' };
+              });
+
               return (
                 <div style={{ ...S.card, padding: 0, overflow: 'hidden', border: '2px solid #cbd5e0' }}>
-                  <div style={{ padding: '14px 20px', background: 'linear-gradient(90deg,#ebf8ff,#fff)', borderBottom: '1px solid #cbd5e0' }}>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: '#2d3748', marginBottom: 4 }}>{tableTitle}</div>
-                    <div style={{ fontSize: 12, color: '#718096' }}>{tableSubtitle}</div>
+                  <div style={{ padding: '14px 20px', background: 'linear-gradient(90deg,#ebf8ff,#fff)', borderBottom: '1px solid #cbd5e0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: '#2d3748', marginBottom: 4 }}>{tableTitle}</div>
+                      <div style={{ fontSize: 12, color: '#718096' }}>{tableSubtitle}</div>
+                    </div>
+                    {isMonthFiltered && (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                        <button
+                          style={{ ...S.addBtn, fontSize: 13, padding: '8px 16px' }}
+                          onClick={() => saveReport(tableTitle, tableSubtitle, reportRows)}
+                        >
+                          📤 保存
+                        </button>
+                        {saveMsg && <span style={{ fontSize: 12, color: saveMsg.includes('⚠️') ? '#c53030' : '#276749' }}>{saveMsg}</span>}
+                      </div>
+                    )}
                   </div>
                   <table style={S.table}>
                     <thead>
@@ -758,6 +822,39 @@ export default function AdminPage() {
               });
             })()}
           </>
+        )}
+
+        {/* ===== 保存済み集計一覧（進捗タブ内） ===== */}
+        {tab === 'progress' && progressClientFilter && savedReports.length > 0 && (
+          <div style={{ ...S.card, marginTop: 8 }}>
+            <h3 style={{ ...S.cardTitle, marginBottom: 16 }}>📁 保存済み集計（{clientNameOf(progressClientFilter)}）</h3>
+            <div style={S.tableWrap}>
+              <table style={S.table}>
+                <thead>
+                  <tr>
+                    <th style={S.th}>タイトル</th>
+                    <th style={S.th}>対象月</th>
+                    <th style={S.th}>保存日時</th>
+                    <th style={S.th}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {savedReports.map(r => (
+                    <tr key={r.id}>
+                      <td style={S.td}>{r.title}</td>
+                      <td style={{ ...S.td, fontSize: 12, color: '#4a5568' }}>{monthLabel(r.month)}</td>
+                      <td style={{ ...S.td, fontSize: 12, color: '#718096' }}>
+                        {new Date(r.created_at).toLocaleString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td style={S.td}>
+                        <button style={S.delBtn} onClick={() => deleteReport(r.id)}>🗑️ 削除</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
 
         {/* ===== 回答管理タブ ===== */}
