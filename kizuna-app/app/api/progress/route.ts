@@ -45,20 +45,7 @@ export async function GET(req: NextRequest) {
 
     const progMap = new Map((progRows ?? []).map((p) => [p.user_id, p.completed_count]));
 
-    // 本日の集計（当月表示時のみ）
-    const todayMap = new Map<string, number>();
-    if (isCurrentMonth) {
-      const todayStart = jstTodayStartIso();
-      const { data: todayRows } = await supabaseAdmin
-        .from('answers')
-        .select('user_id')
-        .gte('created_at', todayStart);
-      for (const r of todayRows ?? []) {
-        todayMap.set(r.user_id, (todayMap.get(r.user_id) ?? 0) + 1);
-      }
-    }
-
-    // 月間 正解/不正解/未入力 集計（JST月の範囲）
+    // JST月の開始・終了を UTC で計算
     const [myear, mmonth] = month.split('-').map(Number);
     const jstOffset = 9 * 60 * 60 * 1000;
     const monthStartUtc = new Date(Date.UTC(myear, mmonth - 1, 1) - jstOffset).toISOString();
@@ -66,57 +53,34 @@ export async function GET(req: NextRequest) {
     const nextMon = mmonth === 12 ? 1 : mmonth + 1;
     const monthEndUtc = new Date(Date.UTC(nextYear, nextMon - 1, 1) - jstOffset).toISOString();
 
-    // 当月は上限なし（.lt 不要）、過去月のみ上限を設ける
-    let answersQuery = supabaseAdmin
-      .from('answers')
-      .select('user_id, is_correct, answer_text, accuracy')
-      .gte('created_at', monthStartUtc)
-      .limit(50000);
-    if (!isCurrentMonth) {
-      answersQuery = answersQuery.lt('created_at', monthEndUtc);
-    }
-    const { data: monthAnswers } = await answersQuery;
-
-    const correctMap = new Map<string, number>();
-    const wrongMap = new Map<string, number>();
-    const emptyMap = new Map<string, number>();
-    const accuracySumMap = new Map<string, number>();
-    const answeredCountMap = new Map<string, number>();
-    for (const a of monthAnswers ?? []) {
-      const isEmpty = !a.answer_text || a.answer_text.trim() === '' || a.answer_text === '{"items":[]}';
-      if (isEmpty) {
-        emptyMap.set(a.user_id, (emptyMap.get(a.user_id) ?? 0) + 1);
-      } else if (a.is_correct) {
-        correctMap.set(a.user_id, (correctMap.get(a.user_id) ?? 0) + 1);
-      } else {
-        wrongMap.set(a.user_id, (wrongMap.get(a.user_id) ?? 0) + 1);
-      }
-      // accuracy の平均を計算（空回答除く）
-      if (!isEmpty && (a as { accuracy?: number | null }).accuracy != null) {
-        const acc = (a as { accuracy: number }).accuracy;
-        accuracySumMap.set(a.user_id, (accuracySumMap.get(a.user_id) ?? 0) + acc);
-        answeredCountMap.set(a.user_id, (answeredCountMap.get(a.user_id) ?? 0) + 1);
+    // 本日の集計（当月表示時のみ）— RPC で行数制限を回避
+    const todayMap = new Map<string, number>();
+    if (isCurrentMonth) {
+      const { data: todayRows } = await supabaseAdmin.rpc('get_today_answer_counts', {
+        p_today_start: jstTodayStartIso(),
+      });
+      for (const r of (todayRows ?? []) as { user_id: string; today_cnt: number }[]) {
+        todayMap.set(r.user_id, Number(r.today_cnt));
       }
     }
 
-    // 全期間集計
-    const { data: allTimeRows } = await supabaseAdmin
-      .from('answers')
-      .select('user_id, is_correct, answer_text, accuracy')
-      .limit(200000);
-    const allTotalMap = new Map<string, number>();
-    const allCorrectMap = new Map<string, number>();
-    const allAccSumMap = new Map<string, number>();
-    const allAccCountMap = new Map<string, number>();
-    for (const a of allTimeRows ?? []) {
-      allTotalMap.set(a.user_id, (allTotalMap.get(a.user_id) ?? 0) + 1);
-      if (a.is_correct) allCorrectMap.set(a.user_id, (allCorrectMap.get(a.user_id) ?? 0) + 1);
-      const isEmpty = !a.answer_text || a.answer_text.trim() === '' || a.answer_text === '{"items":[]}';
-      if (!isEmpty && (a as { accuracy?: number | null }).accuracy != null) {
-        const acc = (a as { accuracy: number }).accuracy;
-        allAccSumMap.set(a.user_id, (allAccSumMap.get(a.user_id) ?? 0) + acc);
-        allAccCountMap.set(a.user_id, (allAccCountMap.get(a.user_id) ?? 0) + 1);
-      }
+    // 月間集計 — RPC で行数制限を回避
+    type MonthStat = { user_id: string; correct_cnt: number; wrong_cnt: number; empty_cnt: number; accuracy_sum: number; answered_cnt: number };
+    const { data: monthStats } = await supabaseAdmin.rpc('get_month_answer_stats', {
+      p_start: monthStartUtc,
+      p_end: isCurrentMonth ? null : monthEndUtc,
+    });
+    const monthMap = new Map<string, MonthStat>();
+    for (const r of (monthStats ?? []) as MonthStat[]) {
+      monthMap.set(r.user_id, r);
+    }
+
+    // 全期間集計 — RPC で行数制限を回避
+    type AllTimeStat = { user_id: string; total_cnt: number; correct_cnt: number; accuracy_sum: number; answered_cnt: number };
+    const { data: allTimeStats } = await supabaseAdmin.rpc('get_alltime_answer_stats');
+    const allTimeMap = new Map<string, AllTimeStat>();
+    for (const r of (allTimeStats ?? []) as AllTimeStat[]) {
+      allTimeMap.set(r.user_id, r);
     }
 
     const { data: clients } = await supabaseAdmin
@@ -127,29 +91,38 @@ export async function GET(req: NextRequest) {
     let userList = users ?? [];
     if (clientId) userList = userList.filter((u) => u.client_id === clientId);
 
-    const avgAccuracy = (sumMap: Map<string, number>, countMap: Map<string, number>, uid: string): number | null => {
-      const cnt = countMap.get(uid) ?? 0;
-      if (cnt === 0) return null;
-      return (sumMap.get(uid) ?? 0) / cnt;
-    };
+    const progress = userList.map((u) => {
+      const ms = monthMap.get(u.id);
+      const at = allTimeMap.get(u.id);
+      const correctCnt = Number(ms?.correct_cnt ?? 0);
+      const wrongCnt = Number(ms?.wrong_cnt ?? 0);
+      const emptyCnt = Number(ms?.empty_cnt ?? 0);
+      const answeredCnt = Number(ms?.answered_cnt ?? 0);
+      const accSum = Number(ms?.accuracy_sum ?? 0);
+      const avgAcc = answeredCnt > 0 ? accSum / answeredCnt : null;
 
-    const progress = userList.map((u) => ({
-      user_id: u.id,
-      name: u.name,
-      login_id: u.login_id,
-      client_id: u.client_id ?? null,
-      month,
-      completed_count: progMap.get(u.id) ?? 0,
-      today_count: todayMap.get(u.id) ?? 0,
-      correct_count: correctMap.get(u.id) ?? 0,
-      wrong_count: wrongMap.get(u.id) ?? 0,
-      empty_count: emptyMap.get(u.id) ?? 0,
-      answered_count: (correctMap.get(u.id) ?? 0) + (wrongMap.get(u.id) ?? 0),
-      avg_accuracy: avgAccuracy(accuracySumMap, answeredCountMap, u.id),
-      all_total: allTotalMap.get(u.id) ?? 0,
-      all_correct: allCorrectMap.get(u.id) ?? 0,
-      all_avg_accuracy: avgAccuracy(allAccSumMap, allAccCountMap, u.id),
-    }));
+      const atAnsweredCnt = Number(at?.answered_cnt ?? 0);
+      const atAccSum = Number(at?.accuracy_sum ?? 0);
+      const allAvgAcc = atAnsweredCnt > 0 ? atAccSum / atAnsweredCnt : null;
+
+      return {
+        user_id: u.id,
+        name: u.name,
+        login_id: u.login_id,
+        client_id: u.client_id ?? null,
+        month,
+        completed_count: progMap.get(u.id) ?? 0,
+        today_count: todayMap.get(u.id) ?? 0,
+        correct_count: correctCnt,
+        wrong_count: wrongCnt,
+        empty_count: emptyCnt,
+        answered_count: answeredCnt,
+        avg_accuracy: avgAcc,
+        all_total: Number(at?.total_cnt ?? 0),
+        all_correct: Number(at?.correct_cnt ?? 0),
+        all_avg_accuracy: allAvgAcc,
+      };
+    });
 
     return NextResponse.json({ progress, quota, clients: clients ?? [], targetMonth: month });
   }
