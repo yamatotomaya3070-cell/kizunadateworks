@@ -85,6 +85,7 @@ export default function AdminPage() {
   const [answerUsers, setAnswerUsers] = useState<User[]>([]);
   const [answerFilter, setAnswerFilter] = useState('');
   const [answerClientFilter, setAnswerClientFilter] = useState('');
+  const [answerMonthFilter, setAnswerMonthFilter] = useState('');
   const [answersMsg, setAnswersMsg] = useState('');
 
   const loadClients = useCallback(async (uid: string) => {
@@ -118,10 +119,11 @@ export default function AdminPage() {
     if (data.reports) setSavedReports(data.reports);
   }, []);
 
-  const loadAnswers = useCallback(async (uid: string, userFilter = '', clientFilter = '') => {
+  const loadAnswers = useCallback(async (uid: string, userFilter = '', clientFilter = '', monthFilter = '') => {
     const params = new URLSearchParams({ userId: uid });
     if (userFilter) params.set('targetUserId', userFilter);
     if (clientFilter) params.set('clientId', clientFilter);
+    if (monthFilter) params.set('targetMonth', monthFilter);
     const res = await fetch(`/api/answers?${params.toString()}`);
     const data = await res.json();
     if (data.answers) setAnswers(data.answers);
@@ -363,7 +365,7 @@ export default function AdminPage() {
       <div style={{ display: 'flex', gap: 8, padding: '16px 32px 0', borderBottom: '2px solid #e2e8f0', background: '#fff' }}>
         {(['clients', 'users', 'progress', 'answers'] as Tab[]).map(t => (
           <button key={t} style={{ ...S.tab, ...(tab === t ? S.tabActive : {}) }}
-            onClick={() => { setTab(t); if (t === 'answers' && admin) loadAnswers(admin.id, answerFilter, answerClientFilter); }}>
+            onClick={() => { setTab(t); if (t === 'answers' && admin) loadAnswers(admin.id, answerFilter, answerClientFilter, answerMonthFilter); }}>
             {t === 'clients' ? '🏢 クライアント' : t === 'users' ? '👥 ユーザー' : t === 'progress' ? '📊 進捗' : '📝 回答管理'}
           </button>
         ))}
@@ -729,16 +731,21 @@ export default function AdminPage() {
           <>
             <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
               <select style={S.rowInput} value={answerClientFilter}
-                onChange={e => { setAnswerClientFilter(e.target.value); loadAnswers(admin.id, answerFilter, e.target.value); }}>
+                onChange={e => { setAnswerClientFilter(e.target.value); loadAnswers(admin.id, answerFilter, e.target.value, answerMonthFilter); }}>
                 <option value="">全クライアント</option>
                 {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <select style={S.rowInput} value={answerFilter}
-                onChange={e => { setAnswerFilter(e.target.value); loadAnswers(admin.id, e.target.value, answerClientFilter); }}>
+                onChange={e => { setAnswerFilter(e.target.value); loadAnswers(admin.id, e.target.value, answerClientFilter, answerMonthFilter); }}>
                 <option value="">全ユーザー</option>
                 {answerUsers
                   .filter(u => !answerClientFilter || u.client_id === answerClientFilter)
                   .map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+              <select style={S.rowInput} value={answerMonthFilter}
+                onChange={e => { setAnswerMonthFilter(e.target.value); loadAnswers(admin.id, answerFilter, answerClientFilter, e.target.value); }}>
+                <option value="">全期間</option>
+                {getMonthOptions().map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
               <button style={S.csvBtn} onClick={downloadAnswersCsv}>📥 回答CSV</button>
               <span style={{ fontSize: 13, color: '#718096' }}>{answersMsg}</span>

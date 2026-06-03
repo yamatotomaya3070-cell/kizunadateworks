@@ -194,6 +194,7 @@ export async function GET(req: NextRequest) {
   const userId = searchParams.get('userId') || '';
   const targetUserId = searchParams.get('targetUserId');
   const clientId = searchParams.get('clientId');
+  const targetMonth = searchParams.get('targetMonth') || null;
 
   const { data: adminUser } = await supabaseAdmin
     .from('users')
@@ -212,10 +213,20 @@ export async function GET(req: NextRequest) {
       tasks!answers_task_id_fkey(category, task_type, image_url, correct_text)
     `)
     .order('created_at', { ascending: false })
-    .limit(5000);
+    .limit(1000);
 
   if (targetUserId) {
     query = query.eq('user_id', targetUserId);
+  }
+
+  if (targetMonth) {
+    const [y, m] = targetMonth.split('-').map(Number);
+    const jstOffset = 9 * 60 * 60 * 1000;
+    const start = new Date(Date.UTC(y, m - 1, 1) - jstOffset).toISOString();
+    const nextY = m === 12 ? y + 1 : y;
+    const nextM = m === 12 ? 1 : m + 1;
+    const end = new Date(Date.UTC(nextY, nextM - 1, 1) - jstOffset).toISOString();
+    query = query.gte('created_at', start).lt('created_at', end);
   }
 
   const { data: answers, error } = await query;
