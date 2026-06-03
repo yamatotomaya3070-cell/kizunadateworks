@@ -237,21 +237,43 @@ export default function AdminPage() {
   // ===== 集計保存 =====
   const saveReport = async (title: string, subtitle: string, rows: ReportRow[]) => {
     setSaveMsg('');
-    const res = await fetch('/api/reports', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: admin!.id,
-        clientId: progressClientFilter || null,
-        month: progressMonthFilter,
-        title,
-        subtitle,
-        rows,
-      }),
-    });
-    const data = await res.json();
-    if (data.error) { setSaveMsg('⚠️ ' + data.error); return; }
-    setSaveMsg('✅ 保存しました');
-    loadReports(admin!.id, progressClientFilter);
+    try {
+      const res = await fetch('/api/reports', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: admin!.id,
+          clientId: progressClientFilter || null,
+          month: progressMonthFilter,
+          title,
+          subtitle,
+          rows,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) { setSaveMsg('⚠️ ' + data.error); return; }
+
+      // CSV ダウンロード
+      const csvEsc = (v: string | number) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+      const lines: string[] = [
+        csvEsc(title),
+        csvEsc(subtitle),
+        '',
+        ['名前', '回答数', '正答数', '未入力数', '正答率'].map(csvEsc).join(','),
+        ...rows.map(r => [r.name, r.ans_count, r.correct_count, r.empty_count, r.rate].map(csvEsc).join(',')),
+      ];
+      const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      setSaveMsg('✅ 保存＆ダウンロードしました');
+      loadReports(admin!.id, progressClientFilter);
+    } catch (e) {
+      setSaveMsg('⚠️ エラー: ' + (e as Error).message);
+    }
   };
 
   const deleteReport = async (reportId: string) => {
