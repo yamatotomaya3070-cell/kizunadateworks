@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { currentMonth, jstTodayStartIso } from '@/lib/hash';
@@ -10,6 +11,7 @@ export async function GET(req: NextRequest) {
   const userId = searchParams.get('userId') || '';
   const mode = searchParams.get('mode'); // 'admin'
   const clientId = searchParams.get('clientId');
+  const targetMonthParam = searchParams.get('targetMonth') || null;
 
   const { data: setting } = await supabaseAdmin
     .from('settings')
@@ -28,7 +30,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: '管理者権限が必要です' }, { status: 403 });
     }
 
-    const month = currentMonth();
+    const month = targetMonthParam ?? currentMonth();
+    const isCurrentMonth = month === currentMonth();
+
     const { data: users } = await supabaseAdmin
       .from('users')
       .select('id, name, login_id, client_id')
@@ -41,24 +45,32 @@ export async function GET(req: NextRequest) {
 
     const progMap = new Map((progRows ?? []).map((p) => [p.user_id, p.completed_count]));
 
-    // 本日の集計（ユーザー別）
-    const todayStart = jstTodayStartIso();
-    const { data: todayRows } = await supabaseAdmin
-      .from('answers')
-      .select('user_id')
-      .gte('created_at', todayStart);
-
+    // 本日の集計（当月表示時のみ）
     const todayMap = new Map<string, number>();
-    for (const r of todayRows ?? []) {
-      todayMap.set(r.user_id, (todayMap.get(r.user_id) ?? 0) + 1);
+    if (isCurrentMonth) {
+      const todayStart = jstTodayStartIso();
+      const { data: todayRows } = await supabaseAdmin
+        .from('answers')
+        .select('user_id')
+        .gte('created_at', todayStart);
+      for (const r of todayRows ?? []) {
+        todayMap.set(r.user_id, (todayMap.get(r.user_id) ?? 0) + 1);
+      }
     }
 
-    // 月間 正解/不正解/未入力 集計
+    // 月間 正解/不正解/未入力 集計（指定月の範囲）
+    const [myear, mmonth] = month.split('-').map(Number);
+    const nextYear = mmonth === 12 ? myear + 1 : myear;
+    const nextMon = mmonth === 12 ? 1 : mmonth + 1;
+    const nextMonthStr = `${nextYear}-${String(nextMon).padStart(2, '0')}`;
     const monthStartIso = `${month}-01T00:00:00+09:00`;
+    const monthEndIso = `${nextMonthStr}-01T00:00:00+09:00`;
+
     const { data: monthAnswers } = await supabaseAdmin
       .from('answers')
       .select('user_id, is_correct, answer_text')
-      .gte('created_at', new Date(monthStartIso).toISOString());
+      .gte('created_at', new Date(monthStartIso).toISOString())
+      .lt('created_at', new Date(monthEndIso).toISOString());
 
     const correctMap = new Map<string, number>();
     const wrongMap = new Map<string, number>();
@@ -104,7 +116,7 @@ export async function GET(req: NextRequest) {
       all_correct: allCorrectMap.get(u.id) ?? 0,
     }));
 
-    return NextResponse.json({ progress, quota, clients: clients ?? [] });
+    return NextResponse.json({ progress, quota, clients: clients ?? [], targetMonth: month });
   }
 
   // ユーザー個人の進捗

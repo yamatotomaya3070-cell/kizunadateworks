@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from 'react';
 
 interface User { id: string; name: string; login_id: string; role: string; client_id?: string | null; password_plain?: string | null; }
 interface Client { id: string; name: string; created_at?: string; }
-interface Task { id: string; image_url: string; correct_text: string; category: string; task_type: string; created_at: string; }
 interface ProgressRow {
   user_id: string;
   name: string;
@@ -21,85 +20,23 @@ interface ProgressRow {
 }
 interface Answer { id: string; user_name: string; user_id: string; client_id: string | null; client_name: string; task_category: string; task_type: string; image_url: string; correct_text: string; answer_text: string; is_correct: boolean; accuracy: number | null; created_at: string; updated_at: string | null; }
 
-type Tab = 'clients' | 'users' | 'tasks' | 'progress' | 'answers';
+type Tab = 'clients' | 'users' | 'progress' | 'answers';
 
-// Canvas描画（AdminPageで使用）
-async function createTextImage(text: string, taskType: string): Promise<string> {
-  if (typeof document === 'undefined') return '';
-  if (document.fonts) await document.fonts.ready;
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d')!;
-  const lines = text.split('\n');
-
-  let rd: { store?: string; date?: string; items?: { name: string; price: number }[] } | null = null;
-  try { rd = JSON.parse(text); } catch { /* ignore */ }
-
-  if (taskType === 'receipt') {
-    const store = rd?.store || text;
-    const date = rd?.date || '';
-    const items = rd?.items || [];
-    const sub = items.reduce((s, it) => s + Number(it.price || 0), 0);
-    const tax = Math.round(sub * 0.1);
-    const total = sub + tax;
-    const dLines: Array<{ text?: string; right?: string; align?: string; bold?: boolean; size?: number; type?: string }> = [
-      { text: store, align: 'center', bold: true, size: 20 },
-      { text: date, align: 'center', size: 16 },
-      { type: 'divider' },
-      ...items.map(it => ({ text: String(it.name), right: `¥${Number(it.price).toLocaleString()}`, size: 17 })),
-      { type: 'divider' },
-      { text: '小計', right: `¥${sub.toLocaleString()}`, size: 16 },
-      { text: '消費税(10%)', right: `¥${tax.toLocaleString()}`, size: 16 },
-      { text: '合　計', right: `¥${total.toLocaleString()}`, size: 18, bold: true },
-    ];
-    const lineH = 28, padV = 22;
-    const W = 460, H = Math.max(500, dLines.length * lineH + padV * 2 + 100);
-    canvas.width = W; canvas.height = H;
-    ctx.fillStyle = '#3a2516'; ctx.fillRect(0, 0, W, H);
-    ctx.save();
-    ctx.translate(W / 2, H / 2);
-    ctx.rotate((Math.random() - 0.5) * 5 * Math.PI / 180);
-    const rpW = 340, rpH = H - 70;
-    ctx.shadowColor = 'rgba(0,0,0,0.65)'; ctx.shadowBlur = 22;
-    const rpg = ctx.createLinearGradient(-rpW / 2, -rpH / 2, rpW / 2, rpH / 2);
-    rpg.addColorStop(0, '#fefef8'); rpg.addColorStop(1, '#f6f6e0');
-    ctx.fillStyle = rpg; ctx.fillRect(-rpW / 2, -rpH / 2, rpW, rpH);
-    ctx.shadowBlur = 0;
-    ctx.beginPath(); ctx.rect(-rpW / 2, -rpH / 2, rpW, rpH); ctx.clip();
-    ctx.textBaseline = 'top';
-    let ry = -rpH / 2 + padV;
-    for (const dl of dLines) {
-      if (dl.type === 'divider') { ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]); ctx.beginPath(); ctx.moveTo(-rpW / 2 + 16, ry + lineH * 0.25); ctx.lineTo(rpW / 2 - 16, ry + lineH * 0.25); ctx.stroke(); ctx.setLineDash([]); ry += lineH * 0.5; continue; }
-      const fs = dl.size || 17;
-      ctx.font = `${dl.bold ? 'bold ' : ''}${fs}px 'DotGothic16', monospace`;
-      ctx.fillStyle = 'rgba(15,15,10,0.85)';
-      if (dl.align === 'center') { ctx.textAlign = 'center'; ctx.fillText(dl.text ?? '', 0, ry); }
-      else if (dl.right) { ctx.textAlign = 'left'; ctx.fillText(dl.text ?? '', -rpW / 2 + 16, ry); ctx.textAlign = 'right'; ctx.fillText(dl.right!, rpW / 2 - 16, ry); }
-      else { ctx.textAlign = 'left'; ctx.fillText(dl.text ?? '', -rpW / 2 + 16, ry); }
-      ry += lineH;
-    }
-    ctx.restore();
-  } else {
-    // custom/form/note: シンプルなテキスト画像
-    const lineH = 46, fontSize = 28, padTop = 50;
-    const W = 700, spW = 590;
-    const spH = Math.max(400, lines.length * lineH + padTop + 28);
-    const H = spH + 80;
-    canvas.width = W; canvas.height = H;
-    ctx.fillStyle = '#2c3a48'; ctx.fillRect(0, 0, W, H);
-    ctx.save();
-    ctx.translate(W / 2, H / 2);
-    ctx.rotate((Math.random() - 0.5) * 4 * Math.PI / 180);
-    ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 16;
-    ctx.fillStyle = '#fff'; ctx.fillRect(-spW / 2, -spH / 2, spW, spH);
-    ctx.shadowBlur = 0;
-    ctx.beginPath(); ctx.rect(-spW / 2, -spH / 2, spW, spH); ctx.clip();
-    ctx.font = `${fontSize}px 'Noto Sans JP', sans-serif`;
-    ctx.fillStyle = 'rgba(0,30,80,0.82)'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-    let sy = -spH / 2 + padTop;
-    for (const line of lines) { ctx.fillText(line, -spW / 2 + 42, sy); sy += lineH; }
-    ctx.restore();
+function getMonthOptions(): { value: string; label: string }[] {
+  const options: { value: string; label: string }[] = [];
+  const now = new Date();
+  const jst = new Date(now.getTime() + 9 * 3600 * 1000);
+  const y = jst.getUTCFullYear();
+  const m = jst.getUTCMonth();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(Date.UTC(y, m - i, 1));
+    const yy = d.getUTCFullYear();
+    const mm = d.getUTCMonth() + 1;
+    const value = `${yy}-${String(mm).padStart(2, '0')}`;
+    const label = `${yy}年${mm}月`;
+    options.push({ value, label });
   }
-  return canvas.toDataURL('image/jpeg', 0.88);
+  return options;
 }
 
 // ============================================================
@@ -126,23 +63,13 @@ export default function AdminPage() {
   const [newUserClientId, setNewUserClientId] = useState('');
   const [userMsg, setUserMsg] = useState('');
 
-  // タスクタブ
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [newImageUrl, setNewImageUrl] = useState('');
-  const [newCorrectText, setNewCorrectText] = useState('');
-  const [newCategory, setNewCategory] = useState('');
-  const [newTaskType, setNewTaskType] = useState('custom');
-  const [taskMsg, setTaskMsg] = useState('');
-  const [taskImages, setTaskImages] = useState<Record<string, string>>({});
-
-
-
   // 進捗タブ
   const [progressRows, setProgressRows] = useState<ProgressRow[]>([]);
   const [quota, setQuota] = useState(750);
   const [quotaInput, setQuotaInput] = useState(750);
   const [quotaMsg, setQuotaMsg] = useState('');
   const [progressClientFilter, setProgressClientFilter] = useState('');
+  const [progressMonthFilter, setProgressMonthFilter] = useState('');
 
   // 回答タブ
   const [answers, setAnswers] = useState<Answer[]>([]);
@@ -164,25 +91,10 @@ export default function AdminPage() {
     if (data.clients) setClients(data.clients);
   }, []);
 
-  const loadTasks = useCallback(async (uid: string) => {
-    const res = await fetch(`/api/tasks?userId=${uid}&mode=admin`);
-    const data = await res.json();
-    if (!data.tasks) return;
-    setTasks(data.tasks);
-
-    // 画像URLがないタスクはCanvasで生成
-    const imgs: Record<string, string> = {};
-    for (const t of data.tasks) {
-      if (t.image_url) { imgs[t.id] = t.image_url; continue; }
-      if (t.correct_text) {
-        imgs[t.id] = await createTextImage(t.correct_text, t.task_type);
-      }
-    }
-    setTaskImages(imgs);
-  }, []);
-
-  const loadProgress = useCallback(async (uid: string) => {
-    const res = await fetch(`/api/progress?userId=${uid}&mode=admin`);
+  const loadProgress = useCallback(async (uid: string, targetMonth = '') => {
+    const params = new URLSearchParams({ userId: uid, mode: 'admin' });
+    if (targetMonth) params.set('targetMonth', targetMonth);
+    const res = await fetch(`/api/progress?${params.toString()}`);
     const data = await res.json();
     if (data.progress) setProgressRows(data.progress);
     if (data.quota) { setQuota(data.quota); setQuotaInput(data.quota); }
@@ -214,7 +126,6 @@ export default function AdminPage() {
     sessionStorage.setItem('adminUser', JSON.stringify(data.user));
     loadClients(data.user.id);
     loadUsers(data.user.id);
-    loadTasks(data.user.id);
     loadProgress(data.user.id);
   };
 
@@ -231,10 +142,9 @@ export default function AdminPage() {
       setAdmin(u);
       loadClients(u.id);
       loadUsers(u.id);
-      loadTasks(u.id);
       loadProgress(u.id);
     }
-  }, [loadClients, loadUsers, loadTasks, loadProgress]);
+  }, [loadClients, loadUsers, loadProgress]);
 
   // ===== クライアント管理 =====
   const addClient = async () => {
@@ -298,31 +208,6 @@ export default function AdminPage() {
     alert(data.error ? '⚠️ ' + data.error : '✅ パスワードを変更しました');
   };
 
-  // ===== タスク管理 =====
-  const addTask = async () => {
-    setTaskMsg('');
-    const res = await fetch('/api/tasks', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: admin!.id, imageUrl: newImageUrl, correctText: newCorrectText, category: newCategory, taskType: newTaskType }),
-    });
-    const data = await res.json();
-    if (data.error) { setTaskMsg('⚠️ ' + data.error); return; }
-    setTaskMsg('✅ 追加しました');
-    setNewImageUrl(''); setNewCorrectText(''); setNewCategory('');
-    loadTasks(admin!.id);
-  };
-
-  const deleteTask = async (taskId: string) => {
-    if (!confirm('このタスクを削除しますか？')) return;
-    const res = await fetch('/api/tasks', {
-      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: admin!.id, taskId }),
-    });
-    const data = await res.json();
-    alert(data.error ? '⚠️ ' + data.error : '✅ 削除しました');
-    loadTasks(admin!.id);
-  };
-
   // ===== 進捗 =====
   const saveQuota = async () => {
     const res = await fetch('/api/progress', {
@@ -332,7 +217,7 @@ export default function AdminPage() {
     const data = await res.json();
     if (data.error) { setQuotaMsg('⚠️ ' + data.error); return; }
     setQuota(data.quota); setQuotaMsg('✅ 保存しました');
-    loadProgress(admin!.id);
+    loadProgress(admin!.id, progressMonthFilter);
   };
 
   // ===== オンデマンドレシート生成診断 =====
@@ -392,7 +277,7 @@ export default function AdminPage() {
     const data = await res.json();
     if (data.error) { alert('⚠️ ' + data.error); return; }
     alert(`✅ 完了：${data.updated} / ${data.scanned} 件を更新しました`);
-    loadProgress(admin!.id);
+    loadProgress(admin!.id, progressMonthFilter);
     loadAnswers(admin!.id, answerFilter, answerClientFilter);
   };
 
@@ -404,6 +289,12 @@ export default function AdminPage() {
   const csvEscape = (v: string | number | null | undefined) => {
     const s = String(v ?? '');
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const monthLabel = (ym: string) => {
+    if (!ym) return '';
+    const [y, m] = ym.split('-').map(Number);
+    return `${y}年${m}月`;
   };
 
   const downloadAllTimeCsv = () => {
@@ -437,10 +328,11 @@ export default function AdminPage() {
       clientNameOf(p.client_id), p.name, p.login_id, p.month,
       p.today_count, p.completed_count, p.correct_count, p.wrong_count, p.empty_count,
     ].map(csvEscape).join(',')).join('\n');
-    const blob = new Blob(['\uFEFF' + header + body], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob(['﻿' + header + body], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url;
-    a.download = `progress${progressClientFilter ? '_' + clientNameOf(progressClientFilter) : ''}.csv`;
+    const suffix = [progressMonthFilter, progressClientFilter ? clientNameOf(progressClientFilter) : ''].filter(Boolean).join('_');
+    a.download = `progress${suffix ? '_' + suffix : ''}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -454,11 +346,11 @@ export default function AdminPage() {
       const acc = a.accuracy != null ? (a.accuracy * 100).toFixed(1) + '%' : '';
       return [
         date, a.client_name, a.user_name, a.id, a.task_category,
-        a.answer_text, a.is_correct ? '\u6B63\u89E3' : '\u4E0D\u6B63\u89E3', acc, isEmpty ? '\u672A\u5165\u529B' : '',
+        a.answer_text, a.is_correct ? '正解' : '不正解', acc, isEmpty ? '未入力' : '',
         a.created_at, a.updated_at ?? '',
       ].map(csvEscape).join(',');
     }).join('\n');
-    const blob = new Blob(['\uFEFF' + header + body], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob(['﻿' + header + body], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url;
     a.download = `answers${answerClientFilter ? '_' + clientNameOf(answerClientFilter) : ''}.csv`;
@@ -500,10 +392,10 @@ export default function AdminPage() {
 
       {/* タブ */}
       <div style={{ display: 'flex', gap: 8, padding: '16px 32px 0', borderBottom: '2px solid #e2e8f0', background: '#fff' }}>
-        {(['clients', 'users', 'tasks', 'progress', 'answers'] as Tab[]).map(t => (
+        {(['clients', 'users', 'progress', 'answers'] as Tab[]).map(t => (
           <button key={t} style={{ ...S.tab, ...(tab === t ? S.tabActive : {}) }}
             onClick={() => { setTab(t); if (t === 'answers' && admin) loadAnswers(admin.id, answerFilter, answerClientFilter); }}>
-            {t === 'clients' ? '🏢 クライアント' : t === 'users' ? '👥 ユーザー' : t === 'tasks' ? '📋 タスク' : t === 'progress' ? '📊 進捗' : '📝 回答管理'}
+            {t === 'clients' ? '🏢 クライアント' : t === 'users' ? '👥 ユーザー' : t === 'progress' ? '📊 進捗' : '📝 回答管理'}
           </button>
         ))}
       </div>
@@ -592,62 +484,6 @@ export default function AdminPage() {
           </>
         )}
 
-        {/* ===== タスクタブ ===== */}
-        {tab === 'tasks' && (
-          <>
-            {/* タスク追加 */}
-            <div style={S.card}>
-              <h3 style={S.cardTitle}>➕ 新規タスク追加</h3>
-              <div style={S.row}>
-                <input style={{ ...S.rowInput, flex: 2 }} type="text" placeholder="画像URL（任意）" value={newImageUrl} onChange={e => setNewImageUrl(e.target.value)} />
-                <input style={S.rowInput} type="text" placeholder="正解テキスト" value={newCorrectText} onChange={e => setNewCorrectText(e.target.value)} />
-                <input style={S.rowInput} type="text" placeholder="カテゴリ（任意）" value={newCategory} onChange={e => setNewCategory(e.target.value)} />
-                <select style={S.rowInput} value={newTaskType} onChange={e => setNewTaskType(e.target.value)}>
-                  <option value="custom">標準</option>
-                  <option value="receipt">レシート</option>
-                  <option value="form">帳票</option>
-                  <option value="note">メモ</option>
-                </select>
-                <button style={S.addBtn} onClick={addTask}>追加</button>
-              </div>
-              {taskMsg && <p style={taskMsg.includes('⚠️') ? S.err : S.msg}>{taskMsg}</p>}
-            </div>
-
-            {/* タスク一覧 */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-              <h3 style={{ fontSize: 16, color: '#4a5568', margin: 0 }}>登録済みタスク ({tasks.length}件)</h3>
-              <button style={S.refreshBtn} onClick={() => loadTasks(admin.id)}>🔄 更新</button>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 20 }}>
-              {tasks.filter(t => t.correct_text).map(t => {
-                const date = t.created_at ? new Date(t.created_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
-                let displayText = t.correct_text;
-                try {
-                  const p = JSON.parse(t.correct_text);
-                  if (p.store) displayText = `[${p.store}] ${p.date || ''}\n${(p.items || []).map((it: { name: string; price: number }) => `${it.name} ¥${Number(it.price).toLocaleString()}`).join('\n')}`;
-                } catch { /* ignore */ }
-                return (
-                  <div key={t.id} style={S.taskCard}>
-                    {taskImages[t.id]
-                      // eslint-disable-next-line @next/next/no-img-element
-                      ? <img src={taskImages[t.id]} alt="タスク" style={S.taskImg} onClick={() => window.open(taskImages[t.id], '_blank')} />
-                      : <div style={{ ...S.taskImg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a0aec0', fontSize: 13 }}>生成中…</div>
-                    }
-                    <div style={{ padding: 16, flex: 1, display: 'flex', flexDirection: 'column' }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: '#667eea', marginBottom: 4 }}>{t.category || '未分類'} | {t.task_type}</div>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: '#1a202c', marginBottom: 12, flex: 1, whiteSpace: 'pre-wrap' }}>{displayText.slice(0, 80)}</div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 12, borderTop: '1px solid #f7fafc' }}>
-                        <span style={{ fontSize: 11, color: '#a0aec0' }}>{date}</span>
-                        <button style={S.delBtn} onClick={() => deleteTask(t.id)}>🗑️</button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
-
         {/* ===== 進捗タブ ===== */}
         {tab === 'progress' && (
           <>
@@ -661,11 +497,33 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
-              <select style={{ ...S.rowInput, maxWidth: 240 }} value={progressClientFilter} onChange={e => setProgressClientFilter(e.target.value)}>
+            {/* フィルター行 */}
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+              <select style={{ ...S.rowInput, maxWidth: 200 }} value={progressClientFilter} onChange={e => setProgressClientFilter(e.target.value)}>
                 <option value="">全クライアント</option>
                 {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
+              <select
+                style={{ ...S.rowInput, maxWidth: 200 }}
+                value={progressMonthFilter}
+                onChange={e => {
+                  const v = e.target.value;
+                  setProgressMonthFilter(v);
+                  loadProgress(admin.id, v);
+                }}
+              >
+                <option value="">対象月：すべて</option>
+                {getMonthOptions().map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              {progressMonthFilter && (
+                <span style={{ fontSize: 13, color: '#667eea', fontWeight: 700 }}>
+                  対象月：{monthLabel(progressMonthFilter)}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
               <button style={S.csvBtn} onClick={downloadProgressCsv}>📥 進捗CSV</button>
               <button style={S.csvBtn} onClick={downloadAllTimeCsv}>📈 集計CSV（全期間）</button>
               <button style={{ ...S.csvBtn, borderColor: '#fbd38d', background: '#fffaf0', color: '#9c4221' }}
@@ -730,36 +588,82 @@ export default function AdminPage() {
               )}
             </div>
 
-            {/* 全期間集計（GAS の「集計」シート互換：名前・回答数・正答数・正答率） */}
+            {/* 集計表（全期間 or 月別） */}
             {(() => {
               const filtered = progressClientFilter
                 ? progressRows.filter(p => p.client_id === progressClientFilter)
                 : progressRows;
               if (!filtered.length) return null;
-              const totalSum = filtered.reduce((s, r) => s + r.all_total, 0);
-              const correctSum = filtered.reduce((s, r) => s + r.all_correct, 0);
-              const overallRate = totalSum > 0 ? ((correctSum / totalSum) * 100).toFixed(1) + '%' : '—';
+
+              const isMonthFiltered = !!progressMonthFilter;
+              const selectedClientName = progressClientFilter ? clientNameOf(progressClientFilter) : '';
+
+              let tableTitle = '📈 全期間集計';
+              let tableSubtitle = '';
+
+              if (isMonthFiltered) {
+                const [y, m] = progressMonthFilter.split('-').map(Number);
+                if (selectedClientName) {
+                  tableTitle = `${m}月 ${selectedClientName}様 集計結果`;
+                } else {
+                  tableTitle = `${y}年${m}月 集計結果`;
+                }
+              }
+
+              const totalAns = isMonthFiltered
+                ? filtered.reduce((s, r) => s + r.correct_count + r.wrong_count + r.empty_count, 0)
+                : filtered.reduce((s, r) => s + r.all_total, 0);
+              const totalCorrect = isMonthFiltered
+                ? filtered.reduce((s, r) => s + r.correct_count, 0)
+                : filtered.reduce((s, r) => s + r.all_correct, 0);
+              const overallRate = totalAns > 0 ? ((totalCorrect / totalAns) * 100).toFixed(1) + '%' : '—';
+
+              if (isMonthFiltered) {
+                tableSubtitle = `対象月：${monthLabel(progressMonthFilter)}／合計 回答 ${totalAns.toLocaleString()} 件、正答 ${totalCorrect.toLocaleString()} 件、正答率 ${overallRate}`;
+              } else {
+                tableSubtitle = `合計 回答 ${totalAns.toLocaleString()} 件、正答 ${totalCorrect.toLocaleString()} 件、正答率 ${overallRate}`;
+              }
+
+              const sorted = [...filtered].sort((a, b) => {
+                const aAns = isMonthFiltered ? (a.correct_count + a.wrong_count + a.empty_count) : a.all_total;
+                const bAns = isMonthFiltered ? (b.correct_count + b.wrong_count + b.empty_count) : b.all_total;
+                return bAns - aAns;
+              });
+
               return (
                 <div style={{ ...S.card, padding: 0, overflow: 'hidden', border: '2px solid #cbd5e0' }}>
                   <div style={{ padding: '14px 20px', background: 'linear-gradient(90deg,#ebf8ff,#fff)', borderBottom: '1px solid #cbd5e0' }}>
-                    <div style={{ fontSize: 16, fontWeight: 700, color: '#2d3748', marginBottom: 4 }}>📈 全期間集計</div>
-                    <div style={{ fontSize: 12, color: '#718096' }}>
-                      GAS の「集計」シート相当（全期間：名前・回答数・正答数・正答率）／
-                      合計 回答 <b>{totalSum.toLocaleString()}</b> 件、正答 <b>{correctSum.toLocaleString()}</b> 件、正答率 <b style={{ color: '#276749' }}>{overallRate}</b>
-                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: '#2d3748', marginBottom: 4 }}>{tableTitle}</div>
+                    <div style={{ fontSize: 12, color: '#718096' }}>{tableSubtitle}</div>
                   </div>
                   <table style={S.table}>
-                    <thead><tr><th style={S.th}>名前</th><th style={S.th}>クライアント</th><th style={S.th}>回答数</th><th style={S.th}>正答数</th><th style={S.th}>正答率</th></tr></thead>
+                    <thead>
+                      <tr>
+                        <th style={S.th}>名前</th>
+                        {!isMonthFiltered && <th style={S.th}>クライアント</th>}
+                        <th style={S.th}>回答数</th>
+                        <th style={S.th}>正答数</th>
+                        {isMonthFiltered && <th style={S.th}>未入力数</th>}
+                        <th style={S.th}>正答率</th>
+                      </tr>
+                    </thead>
                     <tbody>
-                      {[...filtered].sort((a, b) => b.all_total - a.all_total).map(p => {
-                        const rate = p.all_total > 0 ? ((p.all_correct / p.all_total) * 100).toFixed(1) + '%' : '—';
+                      {sorted.map(p => {
+                        const ansCount = isMonthFiltered
+                          ? p.correct_count + p.wrong_count + p.empty_count
+                          : p.all_total;
+                        const correctCount = isMonthFiltered ? p.correct_count : p.all_correct;
+                        const rate = ansCount > 0 ? ((correctCount / ansCount) * 100).toFixed(1) + '%' : '—';
                         return (
                           <tr key={p.user_id}>
                             <td style={S.td}>{p.name}</td>
-                            <td style={{ ...S.td, fontSize: 12, color: '#4a5568' }}>{clientNameOf(p.client_id) || '—'}</td>
-                            <td style={S.td}>{p.all_total.toLocaleString()}</td>
-                            <td style={S.td}>{p.all_correct.toLocaleString()}</td>
-                            <td style={{ ...S.td, fontWeight: 700, color: p.all_total > 0 ? '#276749' : '#a0aec0' }}>{rate}</td>
+                            {!isMonthFiltered && (
+                              <td style={{ ...S.td, fontSize: 12, color: '#4a5568' }}>{clientNameOf(p.client_id) || '—'}</td>
+                            )}
+                            <td style={S.td}>{ansCount.toLocaleString()}</td>
+                            <td style={S.td}>{correctCount.toLocaleString()}</td>
+                            {isMonthFiltered && <td style={S.td}>{p.empty_count.toLocaleString()}</td>}
+                            <td style={{ ...S.td, fontWeight: 700, color: ansCount > 0 ? '#276749' : '#a0aec0' }}>{rate}</td>
                           </tr>
                         );
                       })}
@@ -769,10 +673,16 @@ export default function AdminPage() {
               );
             })()}
 
+            {/* クライアント別進捗ブロック */}
             {(() => {
               const filtered = progressClientFilter
                 ? progressRows.filter(p => p.client_id === progressClientFilter)
                 : progressRows;
+
+              const isMonthFiltered = !!progressMonthFilter;
+              const currentMonthLabel = isMonthFiltered
+                ? monthLabel(progressMonthFilter)
+                : '今月';
 
               const groups = new Map<string, ProgressRow[]>();
               for (const p of filtered) {
@@ -796,8 +706,8 @@ export default function AdminPage() {
                     <div style={{ padding: '14px 20px', background: 'linear-gradient(90deg,#edf2f7,#fff)', borderBottom: '1px solid #e2e8f0' }}>
                       <div style={{ fontSize: 16, fontWeight: 700, color: '#2d3748', marginBottom: 6 }}>【{clientName}】</div>
                       <div style={{ fontSize: 13, color: '#4a5568', display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-                        <span>本日完了：<b>{today}</b>件</span>
-                        <span>今月進捗：<b>{completed}</b> / {totalQuota}</span>
+                        {!isMonthFiltered && <span>本日完了：<b>{today}</b>件</span>}
+                        <span>{currentMonthLabel}進捗：<b>{completed}</b> / {totalQuota}</span>
                         <span>正解：<b>{correct}</b>件</span>
                         <span>不正解：<b>{wrong}</b>件</span>
                         <span>未入力：<b>{empty}</b>件</span>
@@ -806,27 +716,39 @@ export default function AdminPage() {
                       </div>
                     </div>
                     <table style={S.table}>
-                      <thead><tr><th style={S.th}>名前</th><th style={S.th}>ログインID</th><th style={S.th}>本日</th><th style={S.th}>今月</th><th style={S.th}>正</th><th style={S.th}>誤</th><th style={S.th}>未入力</th><th style={S.th}>正答率</th><th style={S.th}>進捗</th></tr></thead>
+                      <thead>
+                        <tr>
+                          <th style={S.th}>名前</th>
+                          <th style={S.th}>ログインID</th>
+                          {!isMonthFiltered && <th style={S.th}>本日</th>}
+                          <th style={S.th}>{currentMonthLabel}</th>
+                          <th style={S.th}>正</th>
+                          <th style={S.th}>誤</th>
+                          <th style={S.th}>未入力</th>
+                          <th style={S.th}>正答率</th>
+                          <th style={S.th}>進捗</th>
+                        </tr>
+                      </thead>
                       <tbody>
                         {rows.map(p => {
                           const ans = p.correct_count + p.wrong_count;
                           const rate = ans > 0 ? ((p.correct_count / ans) * 100).toFixed(1) + '%' : '—';
                           return (
-                          <tr key={p.user_id}>
-                            <td style={S.td}>{p.name}</td>
-                            <td style={S.td}>{p.login_id}</td>
-                            <td style={S.td}>{p.today_count}</td>
-                            <td style={S.td}>{p.completed_count} / {quota}</td>
-                            <td style={S.td}>{p.correct_count}</td>
-                            <td style={S.td}>{p.wrong_count}</td>
-                            <td style={S.td}>{p.empty_count}</td>
-                            <td style={{ ...S.td, fontWeight: 700, color: ans > 0 ? '#276749' : '#a0aec0' }}>{rate}</td>
-                            <td style={S.td}>
-                              <div style={{ background: '#e2e8f0', borderRadius: 6, height: 10, width: 140, overflow: 'hidden' }}>
-                                <div style={{ background: 'linear-gradient(90deg,#667eea,#764ba2)', height: '100%', width: `${Math.min(100, (p.completed_count / quota) * 100).toFixed(0)}%`, borderRadius: 6 }} />
-                              </div>
-                            </td>
-                          </tr>
+                            <tr key={p.user_id}>
+                              <td style={S.td}>{p.name}</td>
+                              <td style={S.td}>{p.login_id}</td>
+                              {!isMonthFiltered && <td style={S.td}>{p.today_count}</td>}
+                              <td style={S.td}>{p.completed_count} / {quota}</td>
+                              <td style={S.td}>{p.correct_count}</td>
+                              <td style={S.td}>{p.wrong_count}</td>
+                              <td style={S.td}>{p.empty_count}</td>
+                              <td style={{ ...S.td, fontWeight: 700, color: ans > 0 ? '#276749' : '#a0aec0' }}>{rate}</td>
+                              <td style={S.td}>
+                                <div style={{ background: '#e2e8f0', borderRadius: 6, height: 10, width: 140, overflow: 'hidden' }}>
+                                  <div style={{ background: 'linear-gradient(90deg,#667eea,#764ba2)', height: '100%', width: `${Math.min(100, (p.completed_count / quota) * 100).toFixed(0)}%`, borderRadius: 6 }} />
+                                </div>
+                              </td>
+                            </tr>
                           );
                         })}
                       </tbody>
@@ -926,8 +848,5 @@ const S = {
   csvBtn: { padding: '8px 16px', borderRadius: 10, border: '1px solid #68d391', background: '#f0fff4', color: '#276749', cursor: 'pointer', fontWeight: 700, fontSize: 13, marginBottom: 16, fontFamily: 'inherit' } as React.CSSProperties,
   msg: { fontSize: 13, marginTop: 8, color: '#276749' } as React.CSSProperties,
   err: { fontSize: 13, marginTop: 8, color: '#e53e3e' } as React.CSSProperties,
-  taskCard: { background: '#fff', borderRadius: 16, overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid #edf2f7', display: 'flex', flexDirection: 'column' } as React.CSSProperties,
-  taskImg: { width: '100%', aspectRatio: '16/9', objectFit: 'contain', borderBottom: '1px solid #edf2f7', cursor: 'zoom-in', background: '#f7fafc' } as React.CSSProperties,
   delBtn: { padding: '6px 10px', borderRadius: 8, border: 'none', background: '#fff5f5', color: '#e53e3e', cursor: 'pointer', fontSize: 12 } as React.CSSProperties,
-  refreshBtn: { padding: '10px 20px', borderRadius: 12, border: '1px solid #e2e8f0', background: '#fff', color: '#4a5568', cursor: 'pointer', fontSize: 14, fontWeight: 700, fontFamily: 'inherit' } as React.CSSProperties,
 };
