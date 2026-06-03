@@ -239,6 +239,32 @@ export default function AdminPage() {
     loadProgress(admin!.id, progressMonthFilter);
   };
 
+  // ===== 月次データ削除 =====
+  const [deleteMonth, setDeleteMonth] = useState('');
+  const [deleteClientId, setDeleteClientId] = useState('');
+  const [deleteMsg, setDeleteMsg] = useState('');
+
+  const execDeleteMonth = async () => {
+    if (!deleteMonth) { setDeleteMsg('⚠️ 削除する月を選択してください'); return; }
+    const [y, m] = deleteMonth.split('-').map(Number);
+    const label = `${y}年${m}月`;
+    const target = deleteClientId ? clientNameOf(deleteClientId) + 'の' : '全クライアントの';
+    if (!confirm(`【削除確認】\n${label}分の${target}回答データと進捗データをすべて削除します。\nこの操作は取り消せません。本当に実行しますか？`)) return;
+    setDeleteMsg('⏳ 削除中…');
+    try {
+      const res = await fetch('/api/admin/delete-month', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: admin!.id, month: deleteMonth, clientId: deleteClientId || null }),
+      });
+      const data = await res.json();
+      if (data.error) { setDeleteMsg('⚠️ ' + data.error); return; }
+      setDeleteMsg(`✅ 削除完了：回答 ${data.deleted_answers} 件、進捗 ${data.deleted_progress} 件を削除しました`);
+      loadProgress(admin!.id, progressMonthFilter);
+    } catch (e) {
+      setDeleteMsg('⚠️ 通信エラー: ' + (e as Error).message);
+    }
+  };
+
   // ===== 集計保存 =====
   const saveReport = async (title: string, subtitle: string, rows: ReportRow[]) => {
     setSaveMsg('');
@@ -723,6 +749,45 @@ export default function AdminPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* ===== 月次データ削除（進捗タブ内） ===== */}
+        {tab === 'progress' && (
+          <div style={{ ...S.card, border: '2px solid #fc8181', background: '#fff5f5', marginTop: 8 }}>
+            <h3 style={{ ...S.cardTitle, color: '#c53030', marginBottom: 16 }}>🗑️ 月次データ削除</h3>
+            <p style={{ fontSize: 13, color: '#742a2a', marginBottom: 16 }}>
+              指定した月の<b>回答データ（answers）</b>と<b>進捗データ（progress）</b>を削除します。この操作は取り消せません。
+            </p>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+              <select
+                style={{ ...S.rowInput, maxWidth: 180, borderColor: '#fc8181' }}
+                value={deleteMonth}
+                onChange={e => { setDeleteMonth(e.target.value); setDeleteMsg(''); }}
+              >
+                <option value="">削除する月を選択</option>
+                {getMonthOptions().map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <select
+                style={{ ...S.rowInput, maxWidth: 200, borderColor: '#fc8181' }}
+                value={deleteClientId}
+                onChange={e => { setDeleteClientId(e.target.value); setDeleteMsg(''); }}
+              >
+                <option value="">全クライアント</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <button
+                style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: '#c53030', color: '#fff', fontWeight: 700, fontSize: 14, fontFamily: 'inherit', cursor: 'pointer' }}
+                onClick={execDeleteMonth}
+              >
+                🗑️ 削除する
+              </button>
+            </div>
+            {deleteMsg && (
+              <p style={{ fontSize: 13, color: deleteMsg.includes('⚠️') ? '#c53030' : deleteMsg.includes('⏳') ? '#2b6cb0' : '#276749', margin: 0 }}>
+                {deleteMsg}
+              </p>
+            )}
           </div>
         )}
 
