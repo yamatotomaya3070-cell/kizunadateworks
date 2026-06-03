@@ -205,24 +205,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: '管理者権限が必要です' }, { status: 403 });
   }
 
-  // 月フィルターの日時計算
-  let startTime: string | null = null;
-  let endTime: string | null = null;
+  let query = supabaseAdmin
+    .from('answers')
+    .select(`
+      id, user_id, task_id, answer_text, is_correct, accuracy, created_at, updated_at,
+      users!answers_user_id_fkey(name, client_id),
+      tasks!answers_task_id_fkey(category, task_type, image_url, correct_text)
+    `)
+    .order('created_at', { ascending: false })
+    .limit(10000);
+
+  if (targetUserId) query = query.eq('user_id', targetUserId);
+
   if (targetMonth) {
     const [y, m] = targetMonth.split('-').map(Number);
     const jstOffset = 9 * 60 * 60 * 1000;
-    startTime = new Date(Date.UTC(y, m - 1, 1) - jstOffset).toISOString();
+    const start = new Date(Date.UTC(y, m - 1, 1) - jstOffset).toISOString();
     const nextY = m === 12 ? y + 1 : y;
     const nextM = m === 12 ? 1 : m + 1;
-    endTime = new Date(Date.UTC(nextY, nextM - 1, 1) - jstOffset).toISOString();
+    const end = new Date(Date.UTC(nextY, nextM - 1, 1) - jstOffset).toISOString();
+    query = query.gte('created_at', start).lt('created_at', end);
   }
 
-  // RPC で 10000 件上限（Supabase max rows 制限を回避）
-  const { data: rpcRows, error } = await supabaseAdmin.rpc('get_admin_answers', {
-    p_user_id: targetUserId ?? null,
-    p_start_time: startTime,
-    p_end_time: endTime,
-  });
+  const { data: answers, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const { data: users } = await supabaseAdmin
@@ -237,29 +242,26 @@ export async function GET(req: NextRequest) {
 
   const clientMap = new Map((clients ?? []).map((c) => [c.id, c.name]));
 
-  type RpcRow = {
-    id: string; user_id: string; user_name: string; user_client_id: string | null;
-    task_category: string; task_type: string; correct_text: string; image_url: string;
-    answer_text: string; is_correct: boolean; accuracy: number | null;
-    created_at: string; updated_at: string | null;
-  };
-
-  let mapped = ((rpcRows ?? []) as RpcRow[]).map((a: RpcRow) => ({
-    id: a.id,
-    user_name: a.user_name ?? '不明',
-    user_id: a.user_id,
-    client_id: a.user_client_id ?? null,
-    client_name: a.user_client_id ? clientMap.get(a.user_client_id) ?? '' : '',
-    task_category: a.task_category ?? '未分類',
-    task_type: a.task_type ?? 'custom',
-    image_url: a.image_url ?? '',
-    correct_text: a.correct_text ?? '',
-    answer_text: a.answer_text,
-    is_correct: a.is_correct,
-    accuracy: a.accuracy ?? null,
-    created_at: a.created_at,
-    updated_at: a.updated_at ?? null,
-  }));
+  let mapped = (answers ?? []).map((a) => {
+    const u = a.users as { name?: string; client_id?: string } | null;
+    const t = a.tasks as { category?: string; task_type?: string; image_url?: string; correct_text?: string } | null;
+    return {
+      id: a.id,
+      user_name: u?.name ?? '不明',
+      user_id: a.user_id,
+      client_id: u?.client_id ?? null,
+      client_name: u?.client_id ? clientMap.get(u.client_id) ?? '' : '',
+      task_category: t?.category ?? '未分類',
+      task_type: t?.task_type ?? 'custom',
+      image_url: t?.image_url ?? '',
+      correct_text: t?.correct_text ?? '',
+      answer_text: a.answer_text,
+      is_correct: a.is_correct,
+      accuracy: (a as { accuracy?: number | null }).accuracy ?? null,
+      created_at: a.created_at,
+      updated_at: a.updated_at ?? null,
+    };
+  });
 
   if (clientId) {
     mapped = mapped.filter((a) => a.client_id === clientId);
